@@ -1,0 +1,63 @@
+[package]
+name = "roowho2"
+version = "0.1.0"
+edition = "2024"
+resolver = "2"
+license = "BSD3"
+authors = [
+  "projects@pvv.ntnu.no",
+]
+description = "A modern reimplementation of netkit tools"
+categories = ["command-line-interface", "command-line-utilities"]
+readme = "README.md"
+autobins = false
+autolib = false
+
+[dependencies]
+clap = { version = "4.5.53", features = ["derive"] }
+sd-notify = "0.4.5"
+
+[lib]
+name = "roowho2_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "roowhod"
+bench = false
+path = "src/bin/roowhod.rs"
+
+[[bin]]
+name = "finger"
+bench = false
+path = "src/bin/finger.rs"
+
+[[bin]]
+name = "rup"
+bench = false
+path = "src/bin/rup.rs"
+
+[[bin]]
+name = "ruptime"
+bench = false
+path = "src/bin/ruptime.rs"
+
+[[bin]]
+name = "rusers"
+bench = false
+path = "src/bin/rusers.rs"
+
+[[bin]]
+name = "rwall"
+bench = false
+path = "src/bin/rwall.rs"
+
+[[bin]]
+name = "rwho"
+bench = false
+path = "src/bin/rwho.rs"
+
+[profile.releaselto]
+inherits = "release"
+strip = true
+lto = true
+codegen-units = 1
