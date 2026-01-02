@@ -1,3 +1,6 @@
+[![Coverage](https://pages.pvv.ntnu.no/oysteikt/roowho2/main/coverage/badges/for_the_badge.svg)](https://pages.pvv.ntnu.no/oysteikt/roowho2/main/coverage/)
+[![Docs](https://img.shields.io/badge/rust_docs-blue?style=for-the-badge&logo=rust)](https://pages.pvv.ntnu.no/oysteikt/roowho2/main/docs/roowho2/)
+
 # roowhoo2
 
 Reimplementation of a subset of linux' netkit tools.
