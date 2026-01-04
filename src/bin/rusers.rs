@@ -5,7 +5,7 @@ use clap::Parser;
 /// The `rusers` command produces output similar to `who`,
 /// but for the list of hosts or all machines on the local network.
 /// For each host responding to the rusers query,
-/// the host‐name with the names of the users currently logged on is printed on each line.
+/// the host-name with the names of the users currently logged on is printed on each line.
 /// The `rusers` command will wait for one minute to catch late responders.
 #[derive(Debug, Parser)]
 pub struct Args {
