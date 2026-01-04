@@ -6,7 +6,7 @@ use chrono::{DateTime, Duration, Utc};
 /// Classic C struct for utmp data for a single user session.
 ///
 /// This struct is used in the rwhod protocol by being interpreted as raw bytes to be sent over UDP.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
 pub struct Outmp {
     /// tty name
@@ -25,7 +25,7 @@ impl Outmp {
 /// Classic C struct for a single user session.
 ///
 /// This struct is used in the rwhod protocol by being interpreted as raw bytes to be sent over UDP.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
 pub struct Whoent {
     /// active tty info
@@ -59,7 +59,7 @@ impl Whoent {
 /// Classic C struct for a rwhod status update.
 ///
 /// This struct is used in the rwhod protocol by being interpreted as raw bytes to be sent over UDP.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
 pub struct Whod {
     /// protocol version
@@ -228,7 +228,7 @@ impl Whod {
 ///
 /// This struct is intended for easier use in Rust code, with proper types and dynamic arrays.
 /// It can be converted to and from the low-level [`Whod`] struct used for network transmission.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WhodStatusUpdate {
     // NOTE: there is only one defined packet type, so we just omit it here
     /// Timestamp by sender
@@ -282,7 +282,7 @@ impl WhodStatusUpdate {
 ///
 /// This struct is intended for easier use in Rust code, with proper types.
 /// It can be converted to and from the low-level [`Whoent`] struct used for network transmission.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WhodUserEntry {
     /// TTY name (max 8 characters)
     pub tty: String,
@@ -490,5 +490,47 @@ impl TryFrom<WhodStatusUpdate> for Whod {
             wd_boottime,
             wd_we,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn test_whod_serialization_roundtrip() {
+        let original_status = WhodStatusUpdate::new(
+            Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap(),
+            Some(Utc.with_ymd_and_hms(2024, 6, 1, 12, 5, 0).unwrap()),
+            "testhost".to_string(),
+            150,
+            120,
+            100,
+            Utc.with_ymd_and_hms(2024, 5, 31, 8, 0, 0).unwrap(),
+            vec![
+                WhodUserEntry::new(
+                    "tty1".to_string(),
+                    "user1".to_string(),
+                    Utc.with_ymd_and_hms(2024, 6, 1, 10, 0, 0).unwrap(),
+                    Duration::minutes(5),
+                ),
+                WhodUserEntry::new(
+                    "tty2".to_string(),
+                    "user2".to_string(),
+                    Utc.with_ymd_and_hms(2024, 6, 1, 11, 0, 0).unwrap(),
+                    Duration::minutes(10),
+                ),
+            ],
+        );
+
+        let whod_struct =
+            Whod::try_from(original_status.clone()).expect("Conversion to Whod failed");
+        let bytes = whod_struct.to_bytes();
+        let parsed_whod = Whod::from_bytes(&bytes).expect("Parsing from bytes failed");
+        let final_status =
+            WhodStatusUpdate::try_from(parsed_whod).expect("Conversion from Whod failed");
+
+        assert_eq!(original_status, final_status);
     }
 }
