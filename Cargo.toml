@@ -19,7 +19,9 @@ bytes = "1.11.0"
 chrono = { version = "0.4.42", features = ["serde"] }
 clap = { version = "4.5.53", features = ["derive"] }
 nix = { version = "0.30.1", features = ["hostname", "net"] }
-tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread"] }
+tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 # onc-rpc = "0.3.2"
 # sd-notify = "0.4.5"
 # serde = { version = "1.0.228", features = ["derive"] }

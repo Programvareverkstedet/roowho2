@@ -1,34 +1,43 @@
-use std::{collections::HashSet, net::IpAddr, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    net::IpAddr,
+    path::Path,
+    sync::Arc,
+};
 
-use chrono::{Duration, Timelike};
+use anyhow::Context;
+use chrono::{DateTime, Duration, Timelike, Utc};
 use nix::{ifaddrs::getifaddrs, net::if_::InterfaceFlags, sys::stat::stat};
 use uucore::utmpx::Utmpx;
 
 use crate::proto::{Whod, WhodStatusUpdate, WhodUserEntry};
 
+/// Default port for rwhod communication.
+pub const RWHOD_BROADCAST_PORT: u16 = 513;
+
 /// Reads utmp entries to determine currently logged-in users.
-pub fn generate_rwhod_user_entries() -> anyhow::Result<Vec<WhodUserEntry>> {
+pub fn generate_rwhod_user_entries(now: DateTime<Utc>) -> anyhow::Result<Vec<WhodUserEntry>> {
     Utmpx::iter_all_records()
         .filter(|entry| entry.is_user_process())
         .map(|entry| {
             let login_time = entry
                 .login_time()
                 .checked_to_utc()
-                .and_then(|t| {
-                    chrono::DateTime::<chrono::Utc>::from_timestamp_secs(t.unix_timestamp())
-                })
+                .and_then(|t| DateTime::<Utc>::from_timestamp_secs(t.unix_timestamp()))
                 .ok_or_else(|| anyhow::anyhow!("Failed to convert login time to UTC"))?;
 
             let idle_time = stat(&Path::new("/dev").join(entry.tty_device()))
                 .ok()
                 .and_then(|st| {
-                    let last_active =
-                        chrono::DateTime::<chrono::Utc>::from_timestamp_secs(st.st_atime)?;
-                    let now = chrono::Utc::now().with_nanosecond(0)?;
-
-                    Some(now - last_active)
+                    let last_active = DateTime::<Utc>::from_timestamp_secs(st.st_atime)?;
+                    Some((now - last_active).max(Duration::zero()))
                 })
                 .unwrap_or(Duration::zero());
+
+            debug_assert!(
+                idle_time.num_seconds() >= 0,
+                "Idle time should never be negative"
+            );
 
             Ok(WhodUserEntry::new(
                 entry.tty_device(),
@@ -41,24 +50,23 @@ pub fn generate_rwhod_user_entries() -> anyhow::Result<Vec<WhodUserEntry>> {
 }
 
 /// Generate a rwhod status update packet representing the current system state.
-pub fn generate_rwhod_status_update() -> anyhow::Result<Whod> {
+pub fn generate_rwhod_status_update() -> anyhow::Result<WhodStatusUpdate> {
     let sysinfo = nix::sys::sysinfo::sysinfo().unwrap();
     let load_average = sysinfo.load_average();
     let uptime = sysinfo.uptime();
     let hostname = nix::unistd::gethostname()?.to_str().unwrap().to_string();
+    let now = Utc::now().with_nanosecond(0).unwrap_or(Utc::now());
 
     let result = WhodStatusUpdate::new(
-        chrono::Utc::now(),
+        now,
         None,
         hostname,
         (load_average.0 * 100.0).abs() as i32,
         (load_average.1 * 100.0).abs() as i32,
         (load_average.2 * 100.0).abs() as i32,
-        chrono::Utc::now() - uptime,
-        generate_rwhod_user_entries()?,
-    )
-    .try_into()
-    .map_err(|e| anyhow::anyhow!("{}", e))?;
+        now - uptime,
+        generate_rwhod_user_entries(now)?,
+    );
 
     Ok(result)
 }
@@ -120,16 +128,23 @@ pub fn determine_relevant_interfaces() -> anyhow::Result<Vec<RwhodSendTarget>> {
 }
 
 pub async fn send_rwhod_packet_to_interface(
-    socket: &mut tokio::net::UdpSocket,
+    socket: Arc<tokio::net::UdpSocket>,
     interface: &RwhodSendTarget,
     packet: &Whod,
 ) -> anyhow::Result<()> {
     let serialized_packet = packet.to_bytes();
 
+    // TODO: the old rwhod daemon doesn't actually ever listen to ipv6, maybe remove it
     let target_addr = match interface.addr {
-        IpAddr::V4(addr) => std::net::SocketAddr::new(IpAddr::V4(addr), 0),
-        IpAddr::V6(addr) => std::net::SocketAddr::new(IpAddr::V6(addr), 0),
+        IpAddr::V4(addr) => std::net::SocketAddr::new(IpAddr::V4(addr), RWHOD_BROADCAST_PORT),
+        IpAddr::V6(addr) => std::net::SocketAddr::new(IpAddr::V6(addr), RWHOD_BROADCAST_PORT),
     };
+
+    tracing::debug!(
+        "Sending rwhod packet to interface {} at address {}",
+        interface.name,
+        target_addr
+    );
 
     socket
         .send_to(&serialized_packet, &target_addr)
@@ -139,8 +154,77 @@ pub async fn send_rwhod_packet_to_interface(
     Ok(())
 }
 
-// TODO: implement receiving rwhod packets from other hosts
+pub async fn rwhod_packet_receiver_task(
+    socket: Arc<tokio::net::UdpSocket>,
+    whod_status_store: Arc<tokio::sync::RwLock<HashMap<IpAddr, WhodStatusUpdate>>>,
+) -> anyhow::Result<()> {
+    let mut buf = [0u8; Whod::MAX_SIZE];
 
-// TODO: implement storing and loading rwhod packets to/from file
+    loop {
+        let (len, src) = socket.recv_from(&mut buf).await?;
+
+        tracing::debug!("Received rwhod packet of length {} bytes from {}", len, src);
+
+        if len < Whod::HEADER_SIZE {
+            tracing::error!(
+                "Received too short packet from {src}: {len} bytes (needs to be at least {} bytes)",
+                Whod::HEADER_SIZE
+            );
+            continue;
+        }
+
+        let result = Whod::from_bytes(&buf[..len])
+            .context("Failed to parse whod packet")?
+            .try_into()
+            .map(|mut status_update: WhodStatusUpdate| {
+                let timestamp = Utc::now().with_nanosecond(0).unwrap_or(Utc::now());
+                status_update.recvtime = Some(timestamp);
+                status_update
+            })
+            .map_err(|e| anyhow::anyhow!("Invalid whod packet: {}", e));
+
+        match result {
+            Ok(status_update) => {
+                tracing::debug!("Processed whod packet from {src}: {:?}", status_update);
+
+                let mut store = whod_status_store.write().await;
+                store.insert(src.ip(), status_update);
+            }
+            Err(err) => {
+                tracing::error!("Error processing whod packet from {src}: {err}");
+            }
+        }
+    }
+}
+
+pub async fn rwhod_packet_sender_task(
+    socket: Arc<tokio::net::UdpSocket>,
+    interfaces: Vec<RwhodSendTarget>,
+) -> anyhow::Result<()> {
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+
+    loop {
+        interval.tick().await;
+
+        let status_update = generate_rwhod_status_update()?;
+
+        tracing::debug!("Generated rwhod packet: {:?}", status_update);
+
+        let packet = status_update
+            .try_into()
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        for interface in &interfaces {
+            if let Err(e) = send_rwhod_packet_to_interface(socket.clone(), interface, &packet).await
+            {
+                tracing::error!(
+                    "Failed to send rwhod packet on interface {}: {}",
+                    interface.name,
+                    e
+                );
+            }
+        }
+    }
+}
 
 // TODO: implement protocol for cli - daemon communication

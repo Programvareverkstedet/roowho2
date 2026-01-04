@@ -1,41 +1,48 @@
-use std::net::SocketAddrV4;
+use std::{
+    collections::HashMap,
+    net::{Ipv4Addr, SocketAddrV4},
+    sync::Arc,
+};
 
-use anyhow::Context;
-use chrono::Timelike;
-use roowho2_lib::proto::{Whod, WhodStatusUpdate};
-
-const RWHOD_BROADCAST_PORT: u16 = 513;
+use roowho2_lib::server::rwhod::{
+    RWHOD_BROADCAST_PORT, rwhod_packet_receiver_task, rwhod_packet_sender_task,
+};
+use tokio::sync::RwLock;
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let addr = SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, RWHOD_BROADCAST_PORT);
-    let socket = tokio::net::UdpSocket::bind(addr).await?;
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
+
+    let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, RWHOD_BROADCAST_PORT);
+    tracing::info!("Binding RWHOD socket to {}", addr);
+    let socket = Arc::new(tokio::net::UdpSocket::bind(addr).await?);
     socket.set_broadcast(true)?;
 
-    let mut buf = [0u8; Whod::MAX_SIZE];
-    loop {
-        let (len, src) = socket.recv_from(&mut buf).await?;
-        if len < Whod::HEADER_SIZE {
-            eprintln!(
-                "Received too short packet from {src}: {len} bytes (needs to be at least {} bytes)",
-                Whod::HEADER_SIZE
-            );
-            continue;
+    let interfaces = roowho2_lib::server::rwhod::determine_relevant_interfaces()?;
+    let sender_task = rwhod_packet_sender_task(socket.clone(), interfaces);
+
+    let status_store = Arc::new(RwLock::new(HashMap::new()));
+    let receiver_task = rwhod_packet_receiver_task(socket.clone(), status_store);
+
+    tokio::select! {
+        res = sender_task => {
+            if let Err(err) = res {
+                eprintln!("RWHOD sender task error: {}", err);
+            }
         }
-        let result: WhodStatusUpdate = Whod::from_bytes(&buf[..len])
-            .context("Failed to parse whod packet")?
-            .try_into()
-            .map(|mut status_update: WhodStatusUpdate| {
-                let timestamp = chrono::Utc::now()
-                    .with_nanosecond(0)
-                    .unwrap_or(chrono::Utc::now());
-                status_update.recvtime = Some(timestamp);
-                status_update
-            })
-            .map_err(|e| anyhow::anyhow!("Invalid whod packet: {}", e))?;
-
-        println!("Received whod packet from {src}:\n{result:#?}");
-
-        buf = [0u8; Whod::MAX_SIZE];
+        res = receiver_task => {
+            if let Err(err) = res {
+                eprintln!("RWHOD receiver task error: {}", err);
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            println!("Received Ctrl-C, shutting down.");
+        }
     }
+
+    Ok(())
 }

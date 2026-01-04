@@ -1,7 +1,7 @@
 use std::array;
 
 use bytes::{Buf, BufMut, BytesMut};
-use chrono::Duration;
+use chrono::{DateTime, Duration, Utc};
 
 /// Classic C struct for utmp data for a single user session.
 ///
@@ -120,7 +120,7 @@ impl Whod {
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; Whod::MAX_SIZE] {
+    pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = BytesMut::with_capacity(Whod::MAX_SIZE);
         buf.put_u8(self.wd_vers);
         buf.put_u8(self.wd_type);
@@ -133,18 +133,14 @@ impl Whod {
         buf.put_i32(self.wd_loadav[2]);
         buf.put_i32(self.wd_boottime);
 
-        for whoent in &self.wd_we {
+        for whoent in self.wd_we.iter().take_while(|entry| !entry.is_zeroed()) {
             buf.put_slice(&whoent.we_utmp.out_line);
             buf.put_slice(&whoent.we_utmp.out_name);
             buf.put_i32(whoent.we_utmp.out_time);
             buf.put_i32(whoent.we_idle);
         }
 
-        // SAFETY: this should never happen, Whod::MAX_SIZE is computed from the struct size
-        buf
-            .to_vec()
-            .try_into()
-            .expect("Buffer length mismatch, this should never happen")
+        buf.to_vec()
     }
 
     pub fn from_bytes(input: &[u8]) -> anyhow::Result<Self> {
@@ -236,10 +232,10 @@ impl Whod {
 pub struct WhodStatusUpdate {
     // NOTE: there is only one defined packet type, so we just omit it here
     /// Timestamp by sender
-    pub sendtime: chrono::DateTime<chrono::Utc>,
+    pub sendtime: DateTime<Utc>,
 
     /// Timestamp applied by receiver
-    pub recvtime: Option<chrono::DateTime<chrono::Utc>>,
+    pub recvtime: Option<DateTime<Utc>>,
 
     /// Name of the host sending the status update (max 32 characters)
     pub hostname: String,
@@ -252,7 +248,7 @@ pub struct WhodStatusUpdate {
     pub load_average_15_min: i32,
 
     /// Which time the system was booted
-    pub boot_time: chrono::DateTime<chrono::Utc>,
+    pub boot_time: DateTime<Utc>,
 
     /// List of users currently logged in to the host (max 42 entries)
     pub users: Vec<WhodUserEntry>,
@@ -260,13 +256,13 @@ pub struct WhodStatusUpdate {
 
 impl WhodStatusUpdate {
     pub fn new(
-        sendtime: chrono::DateTime<chrono::Utc>,
-        recvtime: Option<chrono::DateTime<chrono::Utc>>,
+        sendtime: DateTime<Utc>,
+        recvtime: Option<DateTime<Utc>>,
         hostname: String,
         load_average_5_min: i32,
         load_average_10_min: i32,
         load_average_15_min: i32,
-        boot_time: chrono::DateTime<chrono::Utc>,
+        boot_time: DateTime<Utc>,
         users: Vec<WhodUserEntry>,
     ) -> Self {
         Self {
@@ -295,7 +291,7 @@ pub struct WhodUserEntry {
     pub user_id: String,
 
     /// Time when the user logged in
-    pub login_time: chrono::DateTime<chrono::Utc>,
+    pub login_time: DateTime<Utc>,
 
     /// How long since the user last typed on the TTY
     pub idle_time: Duration,
@@ -305,7 +301,7 @@ impl WhodUserEntry {
     pub fn new(
         tty: String,
         user_id: String,
-        login_time: chrono::DateTime<chrono::Utc>,
+        login_time: DateTime<Utc>,
         idle_time: Duration,
     ) -> Self {
         Self {
@@ -339,11 +335,9 @@ impl TryFrom<Whoent> for WhodUserEntry {
         let user_id = String::from_utf8(value.we_utmp.out_name[..user_id_end].to_vec())
             .map_err(|e| format!("Invalid UTF-8 in user ID: {}", e))?;
 
-        let login_time = chrono::DateTime::from_timestamp_secs(value.we_utmp.out_time as i64)
-            .ok_or(format!(
-                "Invalid login time timestamp: {}",
-                value.we_utmp.out_time
-            ))?;
+        let login_time = DateTime::from_timestamp_secs(value.we_utmp.out_time as i64).ok_or(
+            format!("Invalid login time timestamp: {}", value.we_utmp.out_time),
+        )?;
 
         Ok(WhodUserEntry {
             tty,
@@ -365,15 +359,16 @@ impl TryFrom<Whod> for WhodStatusUpdate {
             ));
         }
 
-        let sendtime = chrono::DateTime::from_timestamp_secs(value.wd_sendtime as i64).ok_or(
-            format!("Invalid send time timestamp: {}", value.wd_sendtime),
-        )?;
+        let sendtime = DateTime::from_timestamp_secs(value.wd_sendtime as i64).ok_or(format!(
+            "Invalid send time timestamp: {}",
+            value.wd_sendtime
+        ))?;
 
         let recvtime = if value.wd_recvtime == 0 {
             None
         } else {
             Some(
-                chrono::DateTime::from_timestamp_secs(value.wd_recvtime as i64).ok_or(format!(
+                DateTime::from_timestamp_secs(value.wd_recvtime as i64).ok_or(format!(
                     "Invalid receive time timestamp: {}",
                     value.wd_recvtime
                 ))?,
@@ -388,9 +383,10 @@ impl TryFrom<Whod> for WhodStatusUpdate {
         let hostname = String::from_utf8(value.wd_hostname[..hostname_end].to_vec())
             .map_err(|e| format!("Invalid UTF-8 in hostname: {}", e))?;
 
-        let boot_time = chrono::DateTime::from_timestamp_secs(value.wd_boottime as i64).ok_or(
-            format!("Invalid boot time timestamp: {}", value.wd_boottime),
-        )?;
+        let boot_time = DateTime::from_timestamp_secs(value.wd_boottime as i64).ok_or(format!(
+            "Invalid boot time timestamp: {}",
+            value.wd_boottime
+        ))?;
 
         let users = value
             .wd_we
@@ -428,14 +424,12 @@ impl TryFrom<WhodUserEntry> for Whoent {
         let out_time = value
             .login_time
             .timestamp()
-            .max(i32::MAX as i64)
-            .min(i32::MIN as i64) as i32;
+            .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
 
         let we_idle = value
             .idle_time
             .num_seconds()
-            .max(i32::MAX as i64)
-            .min(i32::MIN as i64) as i32;
+            .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
 
         Ok(Whoent {
             we_utmp: Outmp {
@@ -460,18 +454,16 @@ impl TryFrom<WhodStatusUpdate> for Whod {
         let wd_sendtime = value
             .sendtime
             .timestamp()
-            .max(i32::MAX as i64)
-            .min(i32::MIN as i64) as i32;
+            .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
 
         let wd_recvtime = value.recvtime.map_or(0, |dt| {
-            dt.timestamp().max(i32::MAX as i64).min(i32::MIN as i64) as i32
+            dt.timestamp().clamp(i32::MIN as i64, i32::MAX as i64) as i32
         });
 
         let wd_boottime = value
             .boot_time
             .timestamp()
-            .max(i32::MAX as i64)
-            .min(i32::MIN as i64) as i32;
+            .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
 
         let wd_we = value
             .users
