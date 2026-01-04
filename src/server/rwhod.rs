@@ -61,9 +61,11 @@ pub fn generate_rwhod_status_update() -> anyhow::Result<WhodStatusUpdate> {
         now,
         None,
         hostname,
-        (load_average.0 * 100.0).abs() as i32,
-        (load_average.1 * 100.0).abs() as i32,
-        (load_average.2 * 100.0).abs() as i32,
+        (
+            (load_average.0 * 100.0).abs() as i32,
+            (load_average.1 * 100.0).abs() as i32,
+            (load_average.2 * 100.0).abs() as i32,
+        ),
         now - uptime,
         generate_rwhod_user_entries(now)?,
     );

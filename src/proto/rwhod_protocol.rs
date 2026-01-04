@@ -224,6 +224,10 @@ impl Whod {
 
 // ------------------------------------------------
 
+/// Load average representation: (5 min, 10 min, 15 min)
+/// All values are multiplied by 100.
+pub type LoadAverage = (i32, i32, i32);
+
 /// High-level representation of a rwhod status update.
 ///
 /// This struct is intended for easier use in Rust code, with proper types and dynamic arrays.
@@ -240,12 +244,8 @@ pub struct WhodStatusUpdate {
     /// Name of the host sending the status update (max 32 characters)
     pub hostname: String,
 
-    /// load average over 5 minutes multiplied by 100
-    pub load_average_5_min: i32,
-    /// load average over 10 minutes multiplied by 100
-    pub load_average_10_min: i32,
-    /// load average over 15 minutes multiplied by 100
-    pub load_average_15_min: i32,
+    /// load average over 5, 10, and 15 minutes multiplied by 100
+    pub load_average: LoadAverage,
 
     /// Which time the system was booted
     pub boot_time: DateTime<Utc>,
@@ -259,9 +259,7 @@ impl WhodStatusUpdate {
         sendtime: DateTime<Utc>,
         recvtime: Option<DateTime<Utc>>,
         hostname: String,
-        load_average_5_min: i32,
-        load_average_10_min: i32,
-        load_average_15_min: i32,
+        load_average: LoadAverage,
         boot_time: DateTime<Utc>,
         users: Vec<WhodUserEntry>,
     ) -> Self {
@@ -269,9 +267,7 @@ impl WhodStatusUpdate {
             sendtime,
             recvtime,
             hostname,
-            load_average_5_min,
-            load_average_10_min,
-            load_average_15_min,
+            load_average,
             boot_time,
             users,
         }
@@ -400,9 +396,7 @@ impl TryFrom<Whod> for WhodStatusUpdate {
             sendtime,
             recvtime,
             hostname,
-            load_average_5_min: value.wd_loadav[0],
-            load_average_10_min: value.wd_loadav[1],
-            load_average_15_min: value.wd_loadav[2],
+            load_average: value.wd_loadav.into(),
             boot_time,
             users,
         })
@@ -482,11 +476,7 @@ impl TryFrom<WhodStatusUpdate> for Whod {
             wd_sendtime,
             wd_recvtime,
             wd_hostname,
-            wd_loadav: [
-                value.load_average_5_min,
-                value.load_average_10_min,
-                value.load_average_15_min,
-            ],
+            wd_loadav: value.load_average.into(),
             wd_boottime,
             wd_we,
         })
@@ -504,9 +494,7 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap(),
             Some(Utc.with_ymd_and_hms(2024, 6, 1, 12, 5, 0).unwrap()),
             "testhost".to_string(),
-            150,
-            120,
-            100,
+            (25, 20, 18),
             Utc.with_ymd_and_hms(2024, 5, 31, 8, 0, 0).unwrap(),
             vec![
                 WhodUserEntry::new(
