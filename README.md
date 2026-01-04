@@ -1,5 +1,5 @@
 [![Coverage](https://pages.pvv.ntnu.no/Projects/roowho2/main/coverage/badges/for_the_badge.svg)](https://pages.pvv.ntnu.no/Projects/roowho2/main/coverage/)
-[![Docs](https://img.shields.io/badge/rust_docs-blue?style=for-the-badge&logo=rust)](https://pages.pvv.ntnu.no/Projects/roowho2/main/docs/roowho2/)
+[![Docs](https://img.shields.io/badge/rust_docs-blue?style=for-the-badge&logo=rust)](https://pages.pvv.ntnu.no/Projects/roowho2/main/docs/roowho2_lib/)
 
 # roowhoo2
 
