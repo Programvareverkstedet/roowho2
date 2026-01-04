@@ -1,5 +1,11 @@
 use std::array;
 
+use bytes::{Buf, BufMut, BytesMut};
+use chrono::Duration;
+
+/// Classic C struct for utmp data for a single user session.
+///
+/// This struct is used in the rwhod protocol by being interpreted as raw bytes to be sent over UDP.
 #[derive(Debug, Clone)]
 #[repr(C)]
 pub struct Outmp {
@@ -16,6 +22,9 @@ impl Outmp {
     pub const MAX_USER_ID_LEN: usize = 8;
 }
 
+/// Classic C struct for a single user session.
+///
+/// This struct is used in the rwhod protocol by being interpreted as raw bytes to be sent over UDP.
 #[derive(Debug, Clone)]
 #[repr(C)]
 pub struct Whoent {
@@ -25,6 +34,31 @@ pub struct Whoent {
     pub we_idle: i32,
 }
 
+impl Whoent {
+    pub const SIZE: usize = std::mem::size_of::<Self>();
+
+    fn zeroed() -> Self {
+        Self {
+            we_utmp: Outmp {
+                out_line: [0u8; Outmp::MAX_TTY_NAME_LEN],
+                out_name: [0u8; Outmp::MAX_USER_ID_LEN],
+                out_time: 0,
+            },
+            we_idle: 0,
+        }
+    }
+
+    fn is_zeroed(&self) -> bool {
+        self.we_utmp.out_line.iter().all(|&b| b == 0)
+            && self.we_utmp.out_name.iter().all(|&b| b == 0)
+            && self.we_utmp.out_time == 0
+            && self.we_idle == 0
+    }
+}
+
+/// Classic C struct for a rwhod status update.
+///
+/// This struct is used in the rwhod protocol by being interpreted as raw bytes to be sent over UDP.
 #[derive(Debug, Clone)]
 #[repr(C)]
 pub struct Whod {
@@ -47,7 +81,9 @@ pub struct Whod {
 }
 
 impl Whod {
-    pub const SIZE: usize = std::mem::size_of::<Whod>();
+    pub const HEADER_SIZE: usize = 1 + 1 + 2 + 4 + 4 + Self::MAX_HOSTNAME_LEN + 4 * 3 + 4;
+    pub const MAX_SIZE: usize = std::mem::size_of::<Self>();
+
     pub const MAX_HOSTNAME_LEN: usize = 32;
     pub const MAX_WHOENTRIES: usize = 1024 / std::mem::size_of::<Whoent>();
 
@@ -56,42 +92,170 @@ impl Whod {
     // NOTE: there was probably meant to be more packet types, but only status is defined.
     pub const WHODTYPE_STATUS: u8 = 1;
 
-    pub fn to_bytes(&self) -> [u8; std::mem::size_of::<Whod>()] {
-        unsafe { std::mem::transmute_copy(self) }
+    pub fn new(
+        sendtime: i32,
+        recvtime: i32,
+        hostname: [u8; Self::MAX_HOSTNAME_LEN],
+        loadav: [i32; 3],
+        boottime: i32,
+        whoentries: [Whoent; Self::MAX_WHOENTRIES],
+    ) -> Self {
+        debug_assert!(
+            whoentries
+                .iter()
+                .skip_while(|entry| !entry.is_zeroed())
+                .all(|entry| entry.is_zeroed())
+        );
+
+        Self {
+            wd_vers: Self::WHODVERSION,
+            wd_type: Self::WHODTYPE_STATUS,
+            wd_pad: [0u8; 2],
+            wd_sendtime: sendtime,
+            wd_recvtime: recvtime,
+            wd_hostname: hostname,
+            wd_loadav: loadav,
+            wd_boottime: boottime,
+            wd_we: whoentries,
+        }
     }
 
-    // TODO: we should probably make a safer parser.
-    pub fn from_bytes(bytes: &[u8; std::mem::size_of::<Whod>()]) -> Self {
-        unsafe { std::mem::transmute_copy(bytes) }
+    pub fn to_bytes(&self) -> [u8; Whod::MAX_SIZE] {
+        let mut buf = BytesMut::with_capacity(Whod::MAX_SIZE);
+        buf.put_u8(self.wd_vers);
+        buf.put_u8(self.wd_type);
+        buf.put_slice(&self.wd_pad);
+        buf.put_i32(self.wd_sendtime);
+        buf.put_i32(self.wd_recvtime);
+        buf.put_slice(&self.wd_hostname);
+        buf.put_i32(self.wd_loadav[0]);
+        buf.put_i32(self.wd_loadav[1]);
+        buf.put_i32(self.wd_loadav[2]);
+        buf.put_i32(self.wd_boottime);
+
+        for whoent in &self.wd_we {
+            buf.put_slice(&whoent.we_utmp.out_line);
+            buf.put_slice(&whoent.we_utmp.out_name);
+            buf.put_i32(whoent.we_utmp.out_time);
+            buf.put_i32(whoent.we_idle);
+        }
+
+        // SAFETY: this should never happen, Whod::MAX_SIZE is computed from the struct size
+        buf
+            .to_vec()
+            .try_into()
+            .expect("Buffer length mismatch, this should never happen")
+    }
+
+    pub fn from_bytes(input: &[u8]) -> anyhow::Result<Self> {
+        if input.len() < Self::HEADER_SIZE {
+            return Err(anyhow::anyhow!(
+                "Not enough bytes to parse packet header: {} < {}",
+                input.len(),
+                Self::HEADER_SIZE
+            ));
+        }
+
+        if input.len() > Self::MAX_SIZE {
+            return Err(anyhow::anyhow!(
+                "Too many bytes to parse packet: {} > {}",
+                input.len(),
+                Self::MAX_SIZE
+            ));
+        }
+
+        if !(input.len() - Self::HEADER_SIZE).is_multiple_of(Whoent::SIZE) {
+            return Err(anyhow::anyhow!(
+                "Invalid packet length: {} (not aligned with struct sizes, should be {} + N * {})",
+                input.len(),
+                Self::HEADER_SIZE,
+                Whoent::SIZE,
+            ));
+        }
+
+        let mut bytes = bytes::Bytes::copy_from_slice(input);
+
+        let wd_vers = bytes.get_u8();
+        debug_assert!(wd_vers == Self::WHODVERSION);
+
+        let wd_type = bytes.get_u8();
+        debug_assert!(wd_type == Self::WHODTYPE_STATUS);
+
+        bytes.advance(2); // skip wd_pad
+
+        let wd_sendtime = bytes.get_i32();
+        let wd_recvtime = bytes.get_i32();
+        let mut wd_hostname = [0u8; Self::MAX_HOSTNAME_LEN];
+        bytes.copy_to_slice(&mut wd_hostname);
+        let wd_loadav = [bytes.get_i32(), bytes.get_i32(), bytes.get_i32()];
+        let wd_boottime = bytes.get_i32();
+
+        debug_assert!(bytes.remaining() + Self::HEADER_SIZE == input.len());
+
+        let mut wd_we = array::from_fn(|_| Whoent::zeroed());
+
+        for (byte_chunk, whoent) in bytes.chunks_exact(Whoent::SIZE).zip(wd_we.iter_mut()) {
+            let mut chunk_bytes = bytes::Bytes::copy_from_slice(byte_chunk);
+
+            let mut out_line = [0u8; Outmp::MAX_TTY_NAME_LEN];
+            chunk_bytes.copy_to_slice(&mut out_line);
+            let mut out_name = [0u8; Outmp::MAX_USER_ID_LEN];
+            chunk_bytes.copy_to_slice(&mut out_name);
+            let out_time = chunk_bytes.get_i32();
+
+            let we_utmp = Outmp {
+                out_line,
+                out_name,
+                out_time,
+            };
+            let we_idle = chunk_bytes.get_i32();
+
+            *whoent = Whoent { we_utmp, we_idle };
+        }
+
+        let result = Whod::new(
+            wd_sendtime,
+            wd_recvtime,
+            wd_hostname,
+            wd_loadav,
+            wd_boottime,
+            wd_we,
+        );
+
+        Ok(result)
     }
 }
 
 // ------------------------------------------------
 
+/// High-level representation of a rwhod status update.
+///
+/// This struct is intended for easier use in Rust code, with proper types and dynamic arrays.
+/// It can be converted to and from the low-level [`Whod`] struct used for network transmission.
 #[derive(Debug, Clone)]
 pub struct WhodStatusUpdate {
     // NOTE: there is only one defined packet type, so we just omit it here
     /// Timestamp by sender
-    sendtime: chrono::DateTime<chrono::Utc>,
+    pub sendtime: chrono::DateTime<chrono::Utc>,
 
     /// Timestamp applied by receiver
-    recvtime: Option<chrono::DateTime<chrono::Utc>>,
+    pub recvtime: Option<chrono::DateTime<chrono::Utc>>,
 
     /// Name of the host sending the status update (max 32 characters)
-    hostname: String,
+    pub hostname: String,
 
     /// load average over 5 minutes multiplied by 100
-    load_average_5_min: i32,
+    pub load_average_5_min: i32,
     /// load average over 10 minutes multiplied by 100
-    load_average_10_min: i32,
+    pub load_average_10_min: i32,
     /// load average over 15 minutes multiplied by 100
-    load_average_15_min: i32,
+    pub load_average_15_min: i32,
 
     /// Which time the system was booted
-    boot_time: chrono::DateTime<chrono::Utc>,
+    pub boot_time: chrono::DateTime<chrono::Utc>,
 
     /// List of users currently logged in to the host (max 42 entries)
-    users: Vec<WhodUserEntry>,
+    pub users: Vec<WhodUserEntry>,
 }
 
 impl WhodStatusUpdate {
@@ -118,19 +282,23 @@ impl WhodStatusUpdate {
     }
 }
 
+/// High-level representation of a single user session in a rwhod status update.
+///
+/// This struct is intended for easier use in Rust code, with proper types.
+/// It can be converted to and from the low-level [`Whoent`] struct used for network transmission.
 #[derive(Debug, Clone)]
 pub struct WhodUserEntry {
     /// TTY name (max 8 characters)
-    tty: String,
+    pub tty: String,
 
     /// User ID (max 8 characters)
-    user_id: String,
+    pub user_id: String,
 
     /// Time when the user logged in
-    login_time: chrono::DateTime<chrono::Utc>,
+    pub login_time: chrono::DateTime<chrono::Utc>,
 
-    /// Idle time in seconds
-    idle_time_seconds: i32,
+    /// How long since the user last typed on the TTY
+    pub idle_time: Duration,
 }
 
 impl WhodUserEntry {
@@ -138,13 +306,13 @@ impl WhodUserEntry {
         tty: String,
         user_id: String,
         login_time: chrono::DateTime<chrono::Utc>,
-        idle_time_seconds: i32,
+        idle_time: Duration,
     ) -> Self {
         Self {
             tty,
             user_id,
             login_time,
-            idle_time_seconds,
+            idle_time,
         }
     }
 }
@@ -181,7 +349,7 @@ impl TryFrom<Whoent> for WhodUserEntry {
             tty,
             user_id,
             login_time,
-            idle_time_seconds: value.we_idle,
+            idle_time: Duration::seconds(value.we_idle as i64),
         })
     }
 }
@@ -224,11 +392,13 @@ impl TryFrom<Whod> for WhodStatusUpdate {
             format!("Invalid boot time timestamp: {}", value.wd_boottime),
         )?;
 
-        let mut users = Vec::new();
-        for whoent in &value.wd_we {
-            let user_entry = WhodUserEntry::try_from(whoent.clone())?;
-            users.push(user_entry);
-        }
+        let users = value
+            .wd_we
+            .iter()
+            .take_while(|whoent| !whoent.is_zeroed())
+            .cloned()
+            .map(WhodUserEntry::try_from)
+            .collect::<Result<Vec<WhodUserEntry>, String>>()?;
 
         Ok(WhodStatusUpdate {
             sendtime,
@@ -243,46 +413,40 @@ impl TryFrom<Whod> for WhodStatusUpdate {
     }
 }
 
-// TODO: support less strict conversions with truncation
-
 impl TryFrom<WhodUserEntry> for Whoent {
     type Error = String;
 
     fn try_from(value: WhodUserEntry) -> Result<Self, Self::Error> {
-        let mut out_line = [0u8; 8];
+        let mut out_line = [0u8; Outmp::MAX_TTY_NAME_LEN];
         let tty_bytes = value.tty.as_bytes();
-        if tty_bytes.len() > out_line.len() {
-            return Err(format!(
-                "TTY name too long: {} (max {})",
-                value.tty,
-                out_line.len()
-            ));
-        }
-        out_line[..tty_bytes.len()].copy_from_slice(tty_bytes);
+        out_line[..tty_bytes.len().min(Outmp::MAX_TTY_NAME_LEN)].copy_from_slice(tty_bytes);
 
-        let mut out_name = [0u8; 8];
+        let mut out_name = [0u8; Outmp::MAX_USER_ID_LEN];
         let user_id_bytes = value.user_id.as_bytes();
-        if user_id_bytes.len() > out_name.len() {
-            return Err(format!(
-                "User ID too long: {} (max {})",
-                value.user_id,
-                out_name.len()
-            ));
-        }
-        out_name[..user_id_bytes.len()].copy_from_slice(user_id_bytes);
+        out_name[..user_id_bytes.len().min(Outmp::MAX_USER_ID_LEN)].copy_from_slice(user_id_bytes);
+
+        let out_time = value
+            .login_time
+            .timestamp()
+            .max(i32::MAX as i64)
+            .min(i32::MIN as i64) as i32;
+
+        let we_idle = value
+            .idle_time
+            .num_seconds()
+            .max(i32::MAX as i64)
+            .min(i32::MIN as i64) as i32;
 
         Ok(Whoent {
             we_utmp: Outmp {
                 out_line,
                 out_name,
-                out_time: value.login_time.timestamp() as i32,
+                out_time,
             },
-            we_idle: value.idle_time_seconds,
+            we_idle,
         })
     }
 }
-
-// TODO: support less strict conversions with truncation
 
 impl TryFrom<WhodStatusUpdate> for Whod {
     type Error = String;
@@ -290,44 +454,48 @@ impl TryFrom<WhodStatusUpdate> for Whod {
     fn try_from(value: WhodStatusUpdate) -> Result<Self, Self::Error> {
         let mut wd_hostname = [0u8; Whod::MAX_HOSTNAME_LEN];
         let hostname_bytes = value.hostname.as_bytes();
-        if hostname_bytes.len() > wd_hostname.len() {
-            return Err(format!(
-                "Hostname too long: {} (max {})",
-                value.hostname,
-                wd_hostname.len()
-            ));
-        }
-        wd_hostname[..hostname_bytes.len()].copy_from_slice(hostname_bytes);
+        wd_hostname[..hostname_bytes.len().min(Whod::MAX_HOSTNAME_LEN)]
+            .copy_from_slice(hostname_bytes);
 
-        let mut wd_we = array::from_fn(|_| Whoent {
-            we_utmp: Outmp {
-                out_line: [0u8; Outmp::MAX_TTY_NAME_LEN],
-                out_name: [0u8; Outmp::MAX_USER_ID_LEN],
-                out_time: 0,
-            },
-            we_idle: 0,
+        let wd_sendtime = value
+            .sendtime
+            .timestamp()
+            .max(i32::MAX as i64)
+            .min(i32::MIN as i64) as i32;
+
+        let wd_recvtime = value.recvtime.map_or(0, |dt| {
+            dt.timestamp().max(i32::MAX as i64).min(i32::MIN as i64) as i32
         });
 
-        for (i, user_entry) in value.users.into_iter().enumerate() {
-            if i >= Whod::MAX_WHOENTRIES {
-                break;
-            }
-            wd_we[i] = Whoent::try_from(user_entry)?;
-        }
+        let wd_boottime = value
+            .boot_time
+            .timestamp()
+            .max(i32::MAX as i64)
+            .min(i32::MIN as i64) as i32;
+
+        let wd_we = value
+            .users
+            .into_iter()
+            .map(Whoent::try_from)
+            .chain(std::iter::repeat(Ok(Whoent::zeroed())))
+            .take(Whod::MAX_WHOENTRIES)
+            .collect::<Result<Vec<Whoent>, String>>()?
+            .try_into()
+            .expect("Length mismatch, this should never happen");
 
         Ok(Whod {
             wd_vers: Whod::WHODVERSION,
             wd_type: Whod::WHODTYPE_STATUS,
             wd_pad: [0u8; 2],
-            wd_sendtime: value.sendtime.timestamp() as i32,
-            wd_recvtime: value.recvtime.map_or(0, |dt| dt.timestamp() as i32),
+            wd_sendtime,
+            wd_recvtime,
             wd_hostname,
             wd_loadav: [
                 value.load_average_5_min,
                 value.load_average_10_min,
                 value.load_average_15_min,
             ],
-            wd_boottime: value.boot_time.timestamp() as i32,
+            wd_boottime,
             wd_we,
         })
     }

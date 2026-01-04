@@ -1,5 +1,6 @@
 use std::{collections::HashSet, net::IpAddr, path::Path};
 
+use chrono::{Duration, Timelike};
 use nix::{ifaddrs::getifaddrs, net::if_::InterfaceFlags, sys::stat::stat};
 use uucore::utmpx::Utmpx;
 
@@ -19,8 +20,15 @@ pub fn generate_rwhod_user_entries() -> anyhow::Result<Vec<WhodUserEntry>> {
                 .ok_or_else(|| anyhow::anyhow!("Failed to convert login time to UTC"))?;
 
             let idle_time = stat(&Path::new("/dev").join(entry.tty_device()))
-                .map(|st| (chrono::Utc::now().timestamp() - st.st_atime) as i32)
-                .unwrap_or(0);
+                .ok()
+                .and_then(|st| {
+                    let last_active =
+                        chrono::DateTime::<chrono::Utc>::from_timestamp_secs(st.st_atime)?;
+                    let now = chrono::Utc::now().with_nanosecond(0)?;
+
+                    Some(now - last_active)
+                })
+                .unwrap_or(Duration::zero());
 
             Ok(WhodUserEntry::new(
                 entry.tty_device(),
@@ -90,8 +98,8 @@ pub fn determine_relevant_interfaces() -> anyhow::Result<Vec<RwhodSendTarget>> {
                 match neighbor_addr {
                     Some(addr) => addr
                         .as_sockaddr_in()
-                        .map(|sa| IpAddr::V4(sa.ip().into()))
-                        .or_else(|| addr.as_sockaddr_in6().map(|sa| IpAddr::V6(sa.ip().into())))
+                        .map(|sa| IpAddr::V4(sa.ip()))
+                        .or_else(|| addr.as_sockaddr_in6().map(|sa| IpAddr::V6(sa.ip())))
                         .map(|ip_addr| RwhodSendTarget {
                             name: iface.interface_name,
                             addr: ip_addr,
