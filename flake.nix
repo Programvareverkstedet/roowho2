@@ -48,6 +48,8 @@
       };
     };
 
+    nixosModules.default = ./nix/module.nix;
+
     packages = forAllSystems (system: pkgs: _:
       let
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
