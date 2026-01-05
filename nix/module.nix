@@ -39,7 +39,7 @@ in {
     systemd.sockets.roowho2-rwhod = lib.mkIf cfg.settings.rwhod.enable {
       wantedBy = [ "sockets.target" ];
       description = "Roowho2 Rwhod Socket";
-      listenDatagrams = [ (toString 513) ];
+      listenDatagrams = [ "0.0.0.0:513" ];
       socketConfig = {
         Service = "roowho2.service";
         FileDescriptorName = "rwhod_socket";
@@ -56,5 +56,7 @@ in {
         # TODO: hardening
       };
     };
+
+    networking.firewall.allowedUDPPorts = lib.mkIf cfg.settings.rwhod.enable [ 513 ];
   };
 }
