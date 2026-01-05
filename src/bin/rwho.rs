@@ -34,11 +34,18 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("Failed to connect to rwhod server");
 
-    let reply = conn
+    let mut reply = conn
         .rwho(args.all)
         .await
         .context("Failed to send rwho request")?
         .map_err(|e| anyhow::anyhow!("Server returned an error for rwho request: {:?}", e))?;
+
+    reply.sort_by(|(host, user), (host2, user2)| {
+        user.user_id
+            .cmp(&user2.user_id)
+            .then_with(|| host.cmp(host2))
+            .then_with(|| user.tty.cmp(&user2.tty))
+    });
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&reply).unwrap());
