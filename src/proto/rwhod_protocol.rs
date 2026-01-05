@@ -1,5 +1,6 @@
 use std::array;
 
+use serde::{Deserialize, Serialize};
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 
@@ -239,7 +240,7 @@ pub type LoadAverage = (i32, i32, i32);
 ///
 /// This struct is intended for easier use in Rust code, with proper types and dynamic arrays.
 /// It can be converted to and from the low-level [`Whod`] struct used for network transmission.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WhodStatusUpdate {
     // NOTE: there is only one defined packet type, so we just omit it here
     /// Timestamp by sender
@@ -285,7 +286,7 @@ impl WhodStatusUpdate {
 ///
 /// This struct is intended for easier use in Rust code, with proper types.
 /// It can be converted to and from the low-level [`Whoent`] struct used for network transmission.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WhodUserEntry {
     /// TTY name (max 8 characters)
     pub tty: String,

@@ -1,4 +1,5 @@
 use clap::Parser;
+use roowho2_lib::server::rwhod::RwhodClientProxy;
 
 /// Check who is logged in on local machines.
 ///
@@ -20,7 +21,18 @@ pub struct Args {
     json: bool,
 }
 
-fn main() {
-    let _args = Args::parse();
-    unimplemented!()
+#[tokio::main]
+async fn main() {
+    let args = Args::parse();
+
+    let mut conn = zlink::unix::connect("/run/roowho2/rwhod.varlink")
+        .await
+        .expect("Failed to connect to rwhod server");
+
+    let reply = conn
+        .rwho(args.all)
+        .await
+        .expect("Failed to send rwho request");
+
+    println!("{:?}", reply);
 }
