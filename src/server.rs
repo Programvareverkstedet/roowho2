@@ -1,2 +1,2 @@
-pub mod rwhod;
 pub mod config;
+pub mod rwhod;

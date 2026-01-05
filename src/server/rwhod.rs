@@ -272,7 +272,7 @@ pub struct RwhodClientServer {
     whod_status_store: Arc<tokio::sync::RwLock<HashMap<IpAddr, WhodStatusUpdate>>>,
 }
 
-impl<'a> RwhodClientServer {
+impl RwhodClientServer {
     pub fn new(
         whod_status_store: Arc<tokio::sync::RwLock<HashMap<IpAddr, WhodStatusUpdate>>>,
     ) -> Self {

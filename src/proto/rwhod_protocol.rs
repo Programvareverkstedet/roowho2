@@ -1,8 +1,8 @@
 use std::array;
 
-use serde::{Deserialize, Serialize};
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Classic C struct for utmp data for a single user session.
 ///
