@@ -27,7 +27,7 @@
       };
 
       rust-bin = rust-overlay.lib.mkRustBin { } pkgs.buildPackages;
-      toolchain = rust-bin.stable.latest.default.override {
+      toolchain = rust-bin.nightly.latest.default.override {
         extensions = [ "rust-src" ];
       };
     in f system pkgs toolchain);
@@ -38,7 +38,8 @@
         cargo-edit
       ];
 
-      RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
+      env.RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
+      env.RUSTFLAGS = "-Zhigher-ranked-assumptions";
     });
 
     overlays = {
