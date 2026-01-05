@@ -40,6 +40,10 @@ async fn main() -> anyhow::Result<()> {
         .context("Failed to send rwho request")?
         .map_err(|e| anyhow::anyhow!("Server returned an error for rwho request: {:?}", e))?;
 
+    if !args.all {
+        reply.retain(|(_, user)| user.idle_time.num_minutes() <= 11);
+    }
+
     reply.sort_by(|(host, user), (host2, user2)| {
         user.user_id
             .cmp(&user2.user_id)
