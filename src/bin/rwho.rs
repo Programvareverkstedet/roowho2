@@ -88,14 +88,12 @@ fn old_format_user_entries(entries: &[(String, WhodUserEntry)]) -> Vec<String> {
         })
         .unwrap_or(0);
 
-    let result = entries
+    entries
         .iter()
         .map(|(hostname, user)| {
             old_format_user_entry(hostname, hostname_tty_width, idle_time_width, user)
         })
-        .collect();
-
-    result
+        .collect()
 }
 
 fn old_format_user_entry(
