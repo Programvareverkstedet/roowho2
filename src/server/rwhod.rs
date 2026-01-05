@@ -236,7 +236,7 @@ pub trait RwhodClientProxy {
     async fn rwho(
         &mut self,
         all: bool,
-    ) -> zlink::Result<Result<Vec<WhodUserEntry>, RwhodClientError>>;
+    ) -> zlink::Result<Result<Vec<(String, WhodUserEntry)>, RwhodClientError>>;
 
     async fn ruptime(&mut self) -> zlink::Result<Result<Vec<WhodStatusUpdate>, RwhodClientError>>;
 }
@@ -257,7 +257,7 @@ pub enum RwhodClientRequest {
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum RwhodClientResponse {
-    Rwho(Vec<WhodUserEntry>),
+    Rwho(Vec<(String, WhodUserEntry)>),
     Ruptime(Vec<WhodStatusUpdate>),
 }
 
@@ -298,7 +298,13 @@ impl zlink::Service for RwhodClientServer {
                 let store = self.whod_status_store.read().await;
                 let mut all_user_entries = Vec::new();
                 for status_update in store.values() {
-                    all_user_entries.extend_from_slice(&status_update.users);
+                    all_user_entries.extend_from_slice(
+                        &status_update
+                            .users
+                            .iter()
+                            .map(|user| (status_update.hostname.clone(), user.clone()))
+                            .collect::<Vec<(String, WhodUserEntry)>>(),
+                    );
                 }
                 MethodReply::Single(Some(RwhodClientResponse::Rwho(all_user_entries)))
             }
