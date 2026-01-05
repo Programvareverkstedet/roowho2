@@ -75,7 +75,7 @@ pub fn generate_rwhod_status_update() -> anyhow::Result<WhodStatusUpdate> {
     Ok(result)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RwhodSendTarget {
     /// Name of the network interface.
     pub name: String,

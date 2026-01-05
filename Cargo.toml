@@ -22,6 +22,7 @@ futures-util = "0.3.31"
 nix = { version = "0.30.1", features = ["hostname", "net"] }
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+toml = "0.9.10"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 # onc-rpc = "0.3.2"

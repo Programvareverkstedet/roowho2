@@ -19,6 +19,35 @@ async fn main() -> anyhow::Result<()> {
         .with(EnvFilter::from_default_env())
         .init();
 
+    let config = toml::from_str::<roowho2_lib::server::config::Config>(
+        &std::fs::read_to_string("/etc/roowho2/roowho2.toml")
+            .context("Failed to read configuration file /etc/roowho2/roowho2.toml")?,
+    )?;
+
+    let mut join_set = tokio::task::JoinSet::new();
+
+    if config.rwhod.enable {
+        tracing::info!("Starting RWHOD server");
+
+        join_set.spawn(rwhod_server());
+    } else {
+        tracing::debug!("RWHOD server is disabled in configuration");
+    }
+
+    join_set.spawn(ctrl_c_handler());
+
+    join_set.join_next().await.unwrap()??;
+
+    Ok(())
+}
+
+async fn ctrl_c_handler() -> anyhow::Result<()> {
+    tokio::signal::ctrl_c()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to listen for Ctrl-C: {}", e))
+}
+
+async fn rwhod_server() -> anyhow::Result<()> {
     let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, RWHOD_BROADCAST_PORT);
     tracing::debug!("Binding RWHOD socket to {}", addr);
     let socket = tokio::net::UdpSocket::bind(addr)
@@ -42,24 +71,9 @@ async fn main() -> anyhow::Result<()> {
     let client_server_task = rwhod_client_server_task(client_server_socket, status_store.clone());
 
     tokio::select! {
-        res = sender_task => {
-            if let Err(err) = res {
-                eprintln!("RWHOD sender task error: {}", err);
-            }
-        }
-        res = receiver_task => {
-            if let Err(err) = res {
-                eprintln!("RWHOD receiver task error: {}", err);
-            }
-        }
-        res = client_server_task => {
-            if let Err(err) = res {
-                eprintln!("RWHOD client-server task error: {}", err);
-            }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            println!("Received Ctrl-C, shutting down.");
-        }
+        res = sender_task => res?,
+        res = receiver_task => res?,
+        res = client_server_task => res?,
     }
 
     Ok(())
