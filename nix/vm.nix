@@ -17,6 +17,8 @@ nixpkgs.lib.nixosSystem {
       system.stateVersion = config.system.nixos.release;
       virtualisation.graphics = false;
 
+      users.users.alice.extraGroups = [ "wheel" ];
+
       services.getty.autologinUser = "alice";
 
       users.motd = ''
