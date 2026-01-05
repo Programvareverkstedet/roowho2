@@ -60,7 +60,7 @@
     });
 
     overlays = {
-      default = self.overlays.muscl;
+      default = self.overlays.roowho2;
       roowho2 = final: prev: {
         inherit (self.packages.${prev.stdenv.hostPlatform.system}) roowho2;
       };
