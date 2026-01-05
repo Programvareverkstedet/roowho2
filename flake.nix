@@ -32,6 +32,23 @@
       };
     in f system pkgs toolchain);
   in {
+    apps = let
+      mkApp = program: description: {
+        type = "app";
+        program = toString program;
+        meta = {
+          inherit description;
+        };
+      };
+      mkVm = name: mkApp "${self.nixosConfigurations.${name}.config.system.build.vm}/bin/run-nixos-vm";
+    in forAllSystems (system: pkgs: _: {
+      vm = mkVm "vm" "Start a NixOS VM with roowho2 installed";
+    });
+
+    nixosConfigurations = {
+      vm = import ./nix/vm.nix { inherit self nixpkgs; };
+    };
+
     devShell = forAllSystems (system: pkgs: toolchain: pkgs.mkShell {
       nativeBuildInputs = with pkgs; [
         toolchain
@@ -63,10 +80,15 @@
           ./Cargo.lock
         ];
       };
+
+      rustPlatform = pkgs.makeRustPlatform {
+        rustc = pkgs.rust-bin.nightly.latest.default;
+        cargo = pkgs.rust-bin.nightly.latest.cargo;
+      };
     in {
       default = self.packages.${system}.roowho2;
 
-      roowho2 = pkgs.callPackage ./nix/default.nix { inherit cargoToml cargoLock src; };
+      roowho2 = pkgs.callPackage ./nix/default.nix { inherit cargoToml cargoLock src rustPlatform; };
 
       filteredSource = pkgs.runCommandLocal "filtered-source" { } ''
         ln -s ${src} $out

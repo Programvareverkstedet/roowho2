@@ -12,7 +12,9 @@ in {
         freeformType = format.type;
         options = {
           rwhod = {
-            enable = lib.mkEnableOption "the rwhod service";
+            enable = lib.mkEnableOption "the rwhod service" // {
+              default = true;
+            };
 
             # TODO: allow configuring socket config
           };
@@ -24,10 +26,20 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    systemd.sockets.roowho2-client = {
+      wantedBy = [ "sockets.target" ];
+      description = "Roowho2 Client Communication Socket";
+      listenStreams = [ "/run/roowho2/roowho2.varlink" ];
+      socketConfig = {
+        Service = "roowho2.service";
+        FileDescriptorName = "client_socket";
+      };
+    };
 
-    systemd.sockets.roowhoo2-rwhod = lib.mkIf cfg.settings.rwhod.enable {
+    systemd.sockets.roowho2-rwhod = lib.mkIf cfg.settings.rwhod.enable {
+      wantedBy = [ "sockets.target" ];
       description = "Roowho2 Rwhod Socket";
-      listenDatagrams = [ 513 ];
+      listenDatagrams = [ (toString 513) ];
       socketConfig = {
         Service = "roowho2.service";
         FileDescriptorName = "rwhod_socket";
@@ -37,7 +49,7 @@ in {
 
     systemd.services.roowho2 = {
       serviceConfig = {
-        ExecStart = "${lib.getExe' cfg.package "roowho2d"} --config ${format.toFile cfg.settings}";
+        ExecStart = "${lib.getExe' cfg.package "roowhod"} --config ${format.generate "roowho2-config.toml" cfg.settings}";
         Restart = "on-failure";
         DynamicUser = true;
 

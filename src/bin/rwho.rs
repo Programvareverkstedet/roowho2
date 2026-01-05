@@ -25,7 +25,7 @@ pub struct Args {
 async fn main() {
     let args = Args::parse();
 
-    let mut conn = zlink::unix::connect("/run/roowho2/rwhod.varlink")
+    let mut conn = zlink::unix::connect("/run/roowho2/roowho2.varlink")
         .await
         .expect("Failed to connect to rwhod server");
 

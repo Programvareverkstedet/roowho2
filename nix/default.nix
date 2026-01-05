@@ -18,6 +18,8 @@ rustPlatform.buildRustPackage {
 
   # buildType = "releaselto";
 
+  RUSTFLAGS = "-Zhigher-ranked-assumptions";
+
   meta = with lib; {
     license = licenses.mit;
     platforms = platforms.linux ++ platforms.darwin;
