@@ -58,5 +58,7 @@ in {
     };
 
     networking.firewall.allowedUDPPorts = lib.mkIf cfg.settings.rwhod.enable [ 513 ];
+
+    environment.systemPackages = [ cfg.package ];
   };
 }
