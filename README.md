@@ -8,11 +8,9 @@ Reimplementation of a subset of linux' netkit tools.
 ## Programs reimplemented
 
 - [ ] finger
-- [ ] rup
-- [ ] ruptime
-- [ ] rusers
+- [X] rwho/ruptime
+- [ ] rusers/rup
 - [ ] rwall
-- [ ] rwho
 
 ## Programs *not* reimplemented
 
