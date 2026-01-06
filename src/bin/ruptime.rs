@@ -1,4 +1,8 @@
+use anyhow::Context;
+use chrono::{Duration, Utc};
 use clap::Parser;
+
+use roowho2_lib::{proto::WhodStatusUpdate, server::rwhod::RwhodClientProxy};
 
 /// Show host status of local machines.
 ///
@@ -13,7 +17,7 @@ pub struct Args {
     all: bool,
 
     /// Sort by load average.
-    #[arg(long, short)]
+    #[arg(long, short, conflicts_with = "time", conflicts_with = "users")]
     load: bool,
 
     /// Reverses the sort order.
@@ -21,19 +25,125 @@ pub struct Args {
     reverse: bool,
 
     /// Sort by uptime.
-    #[arg(long, short)]
+    #[arg(long, short, conflicts_with = "load", conflicts_with = "users")]
     time: bool,
 
     /// Sort by number of users.
-    #[arg(long, short)]
+    #[arg(long, short, conflicts_with = "load", conflicts_with = "time")]
     users: bool,
+
+    /// Print the output with the old formatting
+    #[arg(long, short)]
+    old: bool,
 
     /// Output in JSON format
     #[arg(long, short)]
     json: bool,
 }
 
-fn main() {
-    let _args = Args::parse();
-    unimplemented!()
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+
+    let mut conn = zlink::unix::connect("/run/roowho2/roowho2.varlink")
+        .await
+        .expect("Failed to connect to rwhod server");
+
+    let mut reply = conn
+        .ruptime()
+        .await
+        .context("Failed to send rwho request")?
+        .map_err(|e| anyhow::anyhow!("Server returned an error for rwho request: {:?}", e))?;
+
+    sort_entries(&mut reply, args.load, args.time, args.users, args.reverse);
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&reply).unwrap());
+    // } else if args.old {
+    //     for entry in &reply {
+    //         let line = old_format_machine_entry(args.all, entry);
+    //         println!("{}", line);
+    //     }
+    } else {
+        for entry in &reply {
+            let line = old_format_machine_entry(args.all, entry);
+            println!("{}", line);
+        }
+    }
+
+    Ok(())
+}
+
+fn sort_entries(
+    entries: &mut [WhodStatusUpdate],
+    sort_by_load: bool,
+    sort_by_time: bool,
+    sort_by_users: bool,
+    reverse: bool,
+) {
+    entries.sort_by(|entry1, entry2| {
+        let ordering = if sort_by_load {
+            let load1 = entry1.load_average.0 + entry1.load_average.1 + entry1.load_average.2;
+            let load2 = entry2.load_average.0 + entry2.load_average.1 + entry2.load_average.2;
+            load1
+                .partial_cmp(&load2)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        } else if sort_by_time {
+            let uptime1 = Utc::now() - entry1.sendtime;
+            let uptime2 = Utc::now() - entry2.sendtime;
+            uptime1.cmp(&uptime2)
+        } else if sort_by_users {
+            let users1 = entry1.users.len();
+            let users2 = entry2.users.len();
+            users1.cmp(&users2)
+        } else {
+            entry1.hostname.cmp(&entry2.hostname)
+        };
+
+        if reverse {
+            ordering.reverse()
+        } else {
+            ordering
+        }
+    });
+}
+
+fn old_format_machine_entry(all: bool, entry: &WhodStatusUpdate) -> String {
+    let uptime = Utc::now() - entry.sendtime;
+    let is_up = uptime <= Duration::minutes(11);
+
+    let uptime_minutes = uptime.num_minutes();
+    let days = uptime_minutes / (24 * 60);
+    let hours = (uptime_minutes % (24 * 60)) / 60;
+    let minutes = uptime_minutes % 60;
+
+    let uptime_str = if days > 0 {
+        format!("{:3}+{:02}:{:02}", days, hours, minutes)
+    } else if uptime_minutes < 0 || days > 999 {
+        format!("    ??:??")
+    } else {
+        format!("    {:2}:{:02}", hours, minutes)
+    };
+
+    let user_count = if all {
+        entry.users.len()
+    } else {
+        entry
+            .users
+            .iter()
+            .filter(|user| user.idle_time < Duration::hours(1))
+            .count()
+    };
+
+    format!(
+        "{:<12.12} {} {},  {:4} user{}  load {:>4.2}, {:>4.2}, {:>4.2}",
+        entry.hostname,
+        if is_up { "up" } else { "down" },
+        uptime_str,
+        user_count,
+        if user_count == 1 { ", " } else { "s," },
+        entry.load_average.0 as f32 / 100.0,
+        entry.load_average.1 as f32 / 100.0,
+        entry.load_average.2 as f32 / 100.0,
+    )
 }
