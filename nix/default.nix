@@ -16,7 +16,7 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = cargoLock;
 
-  # buildType = "releaselto";
+  buildType = "releaselto";
 
   RUSTFLAGS = "-Zhigher-ranked-assumptions";
 
