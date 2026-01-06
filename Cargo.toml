@@ -40,30 +40,30 @@ name = "roowhod"
 bench = false
 path = "src/bin/roowhod.rs"
 
-[[bin]]
-name = "finger"
-bench = false
-path = "src/bin/finger.rs"
+# [[bin]]
+# name = "finger"
+# bench = false
+# path = "src/bin/finger.rs"
 
-[[bin]]
-name = "rup"
-bench = false
-path = "src/bin/rup.rs"
+# [[bin]]
+# name = "rup"
+# bench = false
+# path = "src/bin/rup.rs"
 
 [[bin]]
 name = "ruptime"
 bench = false
 path = "src/bin/ruptime.rs"
 
-[[bin]]
-name = "rusers"
-bench = false
-path = "src/bin/rusers.rs"
+# [[bin]]
+# name = "rusers"
+# bench = false
+# path = "src/bin/rusers.rs"
 
-[[bin]]
-name = "rwall"
-bench = false
-path = "src/bin/rwall.rs"
+# [[bin]]
+# name = "rwall"
+# bench = false
+# path = "src/bin/rwall.rs"
 
 [[bin]]
 name = "rwho"
