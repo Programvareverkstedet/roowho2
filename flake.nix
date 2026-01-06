@@ -88,7 +88,7 @@
     in {
       default = self.packages.${system}.roowho2;
 
-      roowho2 = pkgs.callPackage ./nix/default.nix { inherit cargoToml cargoLock src rustPlatform; };
+      roowho2 = pkgs.callPackage ./nix/package.nix { inherit cargoToml cargoLock src rustPlatform; };
 
       filteredSource = pkgs.runCommandLocal "filtered-source" { } ''
         ln -s ${src} $out
