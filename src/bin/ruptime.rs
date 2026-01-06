@@ -114,17 +114,17 @@ fn sort_entries(
 }
 
 fn old_format_machine_entry(all: bool, entry: &WhodStatusUpdate) -> String {
-    let uptime = Utc::now() - entry.sendtime;
-    let is_up = uptime <= Duration::minutes(11);
+    let time_since_last_ping = Utc::now() - entry.sendtime;
+    let is_up = time_since_last_ping <= Duration::minutes(11);
 
-    let uptime_minutes = uptime.num_minutes();
-    let days = uptime_minutes / (24 * 60);
-    let hours = (uptime_minutes % (24 * 60)) / 60;
-    let minutes = uptime_minutes % 60;
+    let uptime = Utc::now() - entry.boot_time;
+    let days = uptime.num_days();
+    let hours = uptime.num_hours() % 24;
+    let minutes = uptime.num_minutes() % 60;
 
     let uptime_str = if days > 0 {
         format!("{:3}+{:02}:{:02}", days, hours, minutes)
-    } else if uptime_minutes < 0 || days > 999 {
+    } else if uptime.num_seconds() < 0 || days > 999 {
         "    ??:??".to_string()
     } else {
         format!("    {:2}:{:02}", hours, minutes)
