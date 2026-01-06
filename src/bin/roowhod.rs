@@ -18,6 +18,11 @@ use tokio::{net::UdpSocket, sync::RwLock};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
+#[command(
+    author = "Programvareverkstedet <projects@pvv.ntnu.no>",
+    about,
+    version
+)]
 struct Args {
     /// Path to configuration file
     #[arg(
