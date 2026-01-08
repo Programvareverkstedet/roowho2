@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    net::IpAddr,
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
     path::PathBuf,
     sync::Arc,
@@ -8,15 +7,13 @@ use std::{
 
 use anyhow::Context;
 use clap::Parser;
-use roowho2_lib::{
-    proto::WhodStatusUpdate,
-    server::{
-        rwhod::{rwhod_packet_receiver_task, rwhod_packet_sender_task},
-        varlink_api::varlink_client_server_task,
-    },
-};
 use tokio::{net::UdpSocket, sync::RwLock};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+
+use roowho2_lib::server::{
+    rwhod::{RwhodStatusStore, rwhod_packet_receiver_task, rwhod_packet_sender_task},
+    varlink_api::varlink_client_server_task,
+};
 
 #[derive(Parser)]
 #[command(
@@ -106,7 +103,7 @@ async fn ctrl_c_handler() -> anyhow::Result<()> {
 
 async fn rwhod_server(
     socket: UdpSocket,
-    whod_status_store: Arc<RwLock<HashMap<IpAddr, WhodStatusUpdate>>>,
+    whod_status_store: RwhodStatusStore,
 ) -> anyhow::Result<()> {
     let socket = Arc::new(socket);
 
@@ -125,7 +122,7 @@ async fn rwhod_server(
 
 async fn client_server(
     socket_fd: OwnedFd,
-    whod_status_store: Arc<RwLock<HashMap<IpAddr, WhodStatusUpdate>>>,
+    whod_status_store: RwhodStatusStore,
 ) -> anyhow::Result<()> {
     // SAFETY: see above
     let std_socket =

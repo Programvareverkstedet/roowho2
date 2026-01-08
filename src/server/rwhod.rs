@@ -1,19 +1,31 @@
 use std::{
     collections::{HashMap, HashSet},
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     path::Path,
     sync::Arc,
 };
 
 use anyhow::Context;
 use chrono::{DateTime, Duration, Timelike, Utc};
-use nix::{ifaddrs::getifaddrs, net::if_::InterfaceFlags, sys::stat::stat};
+use nix::{
+    ifaddrs::getifaddrs,
+    net::if_::InterfaceFlags,
+    sys::{stat::stat, sysinfo::sysinfo},
+    unistd::gethostname,
+};
+use tokio::{
+    net::UdpSocket,
+    sync::RwLock,
+    time::{Duration as TokioDuration, interval},
+};
 use uucore::utmpx::Utmpx;
 
 use crate::proto::{Whod, WhodStatusUpdate, WhodUserEntry};
 
 /// Default port for rwhod communication.
 pub const RWHOD_BROADCAST_PORT: u16 = 513;
+
+pub type RwhodStatusStore = Arc<RwLock<HashMap<String, WhodStatusUpdate>>>;
 
 /// Reads utmp entries to determine currently logged-in users.
 pub fn generate_rwhod_user_entries(now: DateTime<Utc>) -> anyhow::Result<Vec<WhodUserEntry>> {
@@ -51,10 +63,10 @@ pub fn generate_rwhod_user_entries(now: DateTime<Utc>) -> anyhow::Result<Vec<Who
 
 /// Generate a rwhod status update packet representing the current system state.
 pub fn generate_rwhod_status_update() -> anyhow::Result<WhodStatusUpdate> {
-    let sysinfo = nix::sys::sysinfo::sysinfo().unwrap();
+    let sysinfo = sysinfo().unwrap();
     let load_average = sysinfo.load_average();
     let uptime = sysinfo.uptime();
-    let hostname = nix::unistd::gethostname()?.to_str().unwrap().to_string();
+    let hostname = gethostname()?.to_str().unwrap().to_string();
     let now = Utc::now().with_nanosecond(0).unwrap_or(Utc::now());
 
     let result = WhodStatusUpdate::new(
@@ -130,7 +142,7 @@ pub fn determine_relevant_interfaces() -> anyhow::Result<Vec<RwhodSendTarget>> {
 }
 
 pub async fn send_rwhod_packet_to_interface(
-    socket: Arc<tokio::net::UdpSocket>,
+    socket: Arc<UdpSocket>,
     interface: &RwhodSendTarget,
     packet: &Whod,
 ) -> anyhow::Result<()> {
@@ -138,8 +150,8 @@ pub async fn send_rwhod_packet_to_interface(
 
     // TODO: the old rwhod daemon doesn't actually ever listen to ipv6, maybe remove it
     let target_addr = match interface.addr {
-        IpAddr::V4(addr) => std::net::SocketAddr::new(IpAddr::V4(addr), RWHOD_BROADCAST_PORT),
-        IpAddr::V6(addr) => std::net::SocketAddr::new(IpAddr::V6(addr), RWHOD_BROADCAST_PORT),
+        IpAddr::V4(addr) => SocketAddr::new(IpAddr::V4(addr), RWHOD_BROADCAST_PORT),
+        IpAddr::V6(addr) => SocketAddr::new(IpAddr::V6(addr), RWHOD_BROADCAST_PORT),
     };
 
     tracing::debug!(
@@ -157,8 +169,8 @@ pub async fn send_rwhod_packet_to_interface(
 }
 
 pub async fn rwhod_packet_receiver_task(
-    socket: Arc<tokio::net::UdpSocket>,
-    whod_status_store: Arc<tokio::sync::RwLock<HashMap<IpAddr, WhodStatusUpdate>>>,
+    socket: Arc<UdpSocket>,
+    whod_status_store: RwhodStatusStore,
 ) -> anyhow::Result<()> {
     let mut buf = [0u8; Whod::MAX_SIZE];
 
@@ -190,7 +202,7 @@ pub async fn rwhod_packet_receiver_task(
                 tracing::debug!("Processed whod packet from {src}: {:?}", status_update);
 
                 let mut store = whod_status_store.write().await;
-                store.insert(src.ip(), status_update);
+                store.insert(status_update.hostname.clone(), status_update);
             }
             Err(err) => {
                 tracing::error!("Error processing whod packet from {src}: {err}");
@@ -200,10 +212,10 @@ pub async fn rwhod_packet_receiver_task(
 }
 
 pub async fn rwhod_packet_sender_task(
-    socket: Arc<tokio::net::UdpSocket>,
+    socket: Arc<UdpSocket>,
     interfaces: Vec<RwhodSendTarget>,
 ) -> anyhow::Result<()> {
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+    let mut interval = interval(TokioDuration::from_secs(60));
 
     loop {
         interval.tick().await;

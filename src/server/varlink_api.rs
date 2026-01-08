@@ -1,15 +1,11 @@
-use std::{
-    collections::HashMap,
-    net::IpAddr,
-    sync::Arc,
-};
-
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use zlink::{ReplyError, service::MethodReply};
 
-use crate::proto::{WhodStatusUpdate, WhodUserEntry};
+use crate::{
+    proto::{WhodStatusUpdate, WhodUserEntry},
+    server::rwhod::RwhodStatusStore,
+};
 
 #[zlink::proxy("no.ntnu.pvv.roowho2.rwhod")]
 pub trait RwhodClientProxy {
@@ -51,19 +47,42 @@ pub enum RwhodClientError {
 }
 
 #[derive(Debug, Clone)]
-pub struct RwhodClientServer {
-    whod_status_store: Arc<RwLock<HashMap<IpAddr, WhodStatusUpdate>>>,
+pub struct Roowhoo2ClientServer {
+    whod_status_store: RwhodStatusStore,
 }
 
-impl RwhodClientServer {
-    pub fn new(
-        whod_status_store: Arc<RwLock<HashMap<IpAddr, WhodStatusUpdate>>>,
-    ) -> Self {
+impl Roowhoo2ClientServer {
+    pub fn new(whod_status_store: RwhodStatusStore) -> Self {
         Self { whod_status_store }
     }
 }
 
-impl zlink::Service for RwhodClientServer {
+impl Roowhoo2ClientServer {
+    // TODO: handle 'all' parameter
+    async fn handle_rwho_request(&self, _all: bool) -> RwhoResponse {
+        let store = self.whod_status_store.read().await;
+
+        let mut all_user_entries = Vec::with_capacity(store.len());
+        for status_update in store.values() {
+            all_user_entries.extend_from_slice(
+                &status_update
+                    .users
+                    .iter()
+                    .map(|user| (status_update.hostname.clone(), user.clone()))
+                    .collect::<Vec<(String, WhodUserEntry)>>(),
+            );
+        }
+
+        all_user_entries
+    }
+
+    async fn handle_ruptime_request(&self) -> RuptimeResponse {
+        let store = self.whod_status_store.read().await;
+        store.values().cloned().collect()
+    }
+}
+
+impl zlink::Service for Roowhoo2ClientServer {
     type MethodCall<'de> = RwhodClientRequest;
     type ReplyParams<'se> = RwhodClientResponse;
     type ReplyStreamParams = ();
@@ -76,35 +95,21 @@ impl zlink::Service for RwhodClientServer {
         _conn: &mut zlink::Connection<Sock>,
     ) -> MethodReply<Self::ReplyParams<'ser>, Self::ReplyStream, Self::ReplyError<'ser>> {
         match call.method() {
-            // TODO: handle 'all' parameter
-            RwhodClientRequest::Rwho { .. } => {
-                let store = self.whod_status_store.read().await;
-                let mut all_user_entries = Vec::new();
-                for status_update in store.values() {
-                    all_user_entries.extend_from_slice(
-                        &status_update
-                            .users
-                            .iter()
-                            .map(|user| (status_update.hostname.clone(), user.clone()))
-                            .collect::<Vec<(String, WhodUserEntry)>>(),
-                    );
-                }
-                MethodReply::Single(Some(RwhodClientResponse::Rwho(all_user_entries)))
-            }
-            RwhodClientRequest::Ruptime => {
-                let store = self.whod_status_store.read().await;
-                let all_status_updates = store.values().cloned().collect();
-                MethodReply::Single(Some(RwhodClientResponse::Ruptime(all_status_updates)))
-            }
+            RwhodClientRequest::Rwho { all } => MethodReply::Single(Some(
+                RwhodClientResponse::Rwho(self.handle_rwho_request(*all).await),
+            )),
+            RwhodClientRequest::Ruptime => MethodReply::Single(Some(RwhodClientResponse::Ruptime(
+                self.handle_ruptime_request().await,
+            ))),
         }
     }
 }
 
 pub async fn varlink_client_server_task(
     socket: zlink::unix::Listener,
-    whod_status_store: Arc<RwLock<HashMap<IpAddr, WhodStatusUpdate>>>,
+    whod_status_store: RwhodStatusStore,
 ) -> anyhow::Result<()> {
-    let service = RwhodClientServer::new(whod_status_store);
+    let service = Roowhoo2ClientServer::new(whod_status_store);
 
     let server = zlink::Server::new(socket, service);
 
