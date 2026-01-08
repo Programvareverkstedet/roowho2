@@ -2,7 +2,7 @@ use anyhow::Context;
 use chrono::{Duration, Utc};
 use clap::Parser;
 
-use roowho2_lib::{proto::WhodStatusUpdate, server::rwhod::RwhodClientProxy};
+use roowho2_lib::{proto::WhodStatusUpdate, server::varlink_api::RwhodClientProxy};
 
 /// Show host status of local machines.
 ///

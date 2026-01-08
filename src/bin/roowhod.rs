@@ -10,8 +10,9 @@ use anyhow::Context;
 use clap::Parser;
 use roowho2_lib::{
     proto::WhodStatusUpdate,
-    server::rwhod::{
-        rwhod_client_server_task, rwhod_packet_receiver_task, rwhod_packet_sender_task,
+    server::{
+        rwhod::{rwhod_packet_receiver_task, rwhod_packet_sender_task},
+        varlink_api::varlink_client_server_task,
     },
 };
 use tokio::{net::UdpSocket, sync::RwLock};
@@ -131,7 +132,7 @@ async fn client_server(
         unsafe { std::os::unix::net::UnixListener::from_raw_fd(socket_fd.as_raw_fd()) };
     std_socket.set_nonblocking(true)?;
     let zlink_listener = zlink::unix::Listener::try_from(OwnedFd::from(std_socket))?;
-    let client_server_task = rwhod_client_server_task(zlink_listener, whod_status_store);
+    let client_server_task = varlink_client_server_task(zlink_listener, whod_status_store);
 
     client_server_task.await?;
 
