@@ -1,5 +1,6 @@
 use anyhow::Context;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::{Shell, generate};
 use roowho2_lib::{proto::WhodUserEntry, server::varlink_api::RwhodClientProxy};
 
 /// Check who is logged in on local machines.
@@ -29,11 +30,21 @@ pub struct Args {
     /// Output in JSON format
     #[arg(long, short)]
     json: bool,
+
+    /// Generate shell completion scripts for the specified shell
+    /// and print them to stdout.
+    #[arg(long, value_enum, hide = true)]
+    completions: Option<Shell>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    if let Some(shell) = args.completions {
+        generate(shell, &mut Args::command(), "rwho", &mut std::io::stdout());
+        return Ok(());
+    }
 
     let mut conn = zlink::unix::connect("/run/roowho2/roowho2.varlink")
         .await

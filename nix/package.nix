@@ -2,6 +2,7 @@
   lib
 , rustPlatform
 , stdenv
+, buildPackages
 , installShellFiles
 , versionCheckHook
 
@@ -19,6 +20,21 @@ rustPlatform.buildRustPackage {
   buildType = "releaselto";
 
   RUSTFLAGS = "-Zhigher-ranked-assumptions";
+
+  nativeBuildInputs = [ installShellFiles ];
+  postInstall = let
+    emulator = stdenv.hostPlatform.emulator buildPackages;
+    installShellCompletions = lib.mapCartesianProduct ({ shell, command }: ''
+      (
+        export PATH="$out/bin:$PATH"
+        "${emulator}" "${command}" --completions=${shell} > "$TMP/${command}.${shell}"
+      )
+      installShellCompletion "--${shell}" --cmd "${command}" "$TMP/${command}.${shell}"
+    '') {
+      shell = [ "bash" "zsh" "fish" ];
+      command = [ "rwho" "ruptime" ];
+    };
+  in lib.concatStringsSep "\n" installShellCompletions;
 
   meta = with lib; {
     license = licenses.mit;
