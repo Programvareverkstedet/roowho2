@@ -22,3 +22,6 @@ Reimplementation of a subset of linux' netkit tools.
 - `biff`/`comsat`: nah
 - `ripquery`/`routed`: nuh-uh
 - `rpc*`: no need
+
+
+<small>This product includes software developed by the University of California, Berkeley and its contributors.</small>

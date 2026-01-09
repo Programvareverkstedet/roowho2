@@ -3,9 +3,11 @@ name = "roowho2"
 version = "0.1.0"
 edition = "2024"
 resolver = "2"
-license = "BSD3"
+license = "BSD-4-Clause"
 authors = [
-  "projects@pvv.ntnu.no",
+  "Programvareverkstedet <projects@pvv.ntnu.no>",
+  "The Regents of the University of California",
+  "Peter Eriksson, Signum Support AB",
 ]
 description = "A modern reimplementation of netkit tools"
 categories = ["command-line-interface", "command-line-utilities"]
