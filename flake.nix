@@ -53,10 +53,17 @@
       nativeBuildInputs = with pkgs; [
         toolchain
         cargo-edit
-      ];
+      ] ++ (lib.optionals stdenv.buildPlatform.isLinux [
+        systemdLibs
+      ]);
 
-      env.RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
-      env.RUSTFLAGS = "-Zhigher-ranked-assumptions";
+      env = {
+        RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
+        RUSTFLAGS = "-Zhigher-ranked-assumptions";
+        CARGO_CFG_FEATURE = lib.concatStringsSep "," (lib.optionals pkgs.stdenv.buildPlatform.isLinux [
+          "systemd"
+        ]);
+      };
     });
 
     overlays = {

@@ -5,6 +5,7 @@
 , buildPackages
 , installShellFiles
 , versionCheckHook
+, systemdLibs
 
 , cargoToml
 , cargoLock
@@ -20,6 +21,14 @@ rustPlatform.buildRustPackage {
   buildType = "releaselto";
 
   RUSTFLAGS = "-Zhigher-ranked-assumptions";
+
+  buildFeatures = lib.optionals stdenv.hostPlatform.isLinux [
+    "systemd"
+  ];
+
+  buildInputs = lib.optionals stdenv.hostPlatform.isLinux [
+    systemdLibs
+  ];
 
   nativeBuildInputs = [ installShellFiles ];
   postInstall = let
