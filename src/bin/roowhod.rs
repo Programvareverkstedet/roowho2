@@ -11,6 +11,7 @@ use tokio::{net::UdpSocket, sync::RwLock};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use roowho2_lib::server::{
+    config::DEFAULT_CONFIG_PATH,
     rwhod::{RwhodStatusStore, rwhod_packet_receiver_task, rwhod_packet_sender_task},
     varlink_api::varlink_client_server_task,
 };
@@ -26,7 +27,7 @@ struct Args {
     #[arg(
         short = 'c',
         long = "config",
-        default_value = "/etc/roowho2/roowho2.toml",
+        default_value = DEFAULT_CONFIG_PATH,
         value_name = "PATH"
     )]
     config_path: PathBuf,
@@ -42,8 +43,10 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = toml::from_str::<roowho2_lib::server::config::Config>(
-        &std::fs::read_to_string(args.config_path)
-            .context("Failed to read configuration file /etc/roowho2/roowho2.toml")?,
+        &std::fs::read_to_string(&args.config_path).context(format!(
+            "Failed to read configuration file {:?}",
+            args.config_path
+        ))?,
     )?;
 
     let fd_map: HashMap<String, OwnedFd> = HashMap::from_iter(
