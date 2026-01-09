@@ -16,6 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Apt update
+        run: apt-get update
+
+      - name: Install system dependencies
+        run: apt-get install -y libsystemd-dev
+
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
@@ -26,6 +32,12 @@ jobs:
     runs-on: debian-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Apt update
+        run: apt-get update
+
+      - name: Install system dependencies
+        run: apt-get install -y libsystemd-dev
 
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -42,6 +54,13 @@ jobs:
     runs-on: debian-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Apt update
+        run: apt-get update
+
+      - name: Install system dependencies
+        run: apt-get install -y libsystemd-dev
+
       - uses: cargo-bins/cargo-binstall@main
 
       - name: Install rust toolchain
@@ -94,6 +113,12 @@ jobs:
     runs-on: debian-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Apt update
+        run: apt-get update
+
+      - name: Install system dependencies
+        run: apt-get install -y libsystemd-dev
 
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@nightly
