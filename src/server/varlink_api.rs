@@ -3,9 +3,11 @@ use serde::{Deserialize, Serialize};
 use zlink::{ReplyError, service::MethodReply};
 
 use crate::{
-    proto::{WhodStatusUpdate, WhodUserEntry},
+    proto::{WhodStatusUpdate, WhodUserEntry, finger_protocol::FingerPerson},
     server::rwhod::RwhodStatusStore,
 };
+
+// Types for 'no.ntnu.pvv.roowho2.rwhod'
 
 #[zlink::proxy("no.ntnu.pvv.roowho2.rwhod")]
 pub trait RwhodClientProxy {
@@ -40,10 +42,67 @@ pub enum RwhodClientResponse {
 pub type RwhoResponse = Vec<(String, WhodUserEntry)>;
 pub type RuptimeResponse = Vec<WhodStatusUpdate>;
 
-#[derive(Debug, ReplyError)]
+#[derive(Debug, Clone, PartialEq, ReplyError)]
 #[zlink(interface = "no.ntnu.pvv.roowho2.rwhod")]
 pub enum RwhodClientError {
     InvalidRequest,
+}
+
+// Types for 'no.ntnu.pvv.roowho2.finger'
+
+#[zlink::proxy("no.ntnu.pvv.roowho2.finger")]
+pub trait FingerClientProxy {
+    async fn finger(
+        &mut self,
+        user_queries: Vec<String>,
+    ) -> zlink::Result<Result<Vec<FingerPerson>, FingerClientError>>;
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "method", content = "parameters")]
+pub enum FingerClientRequest {
+    #[serde(rename = "no.ntnu.pvv.roowho2.finger.Finger")]
+    Finger { user_queries: Vec<String> },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum FingerClientResponse {
+    Finger(FingerResponse),
+}
+
+pub type FingerResponse = Vec<FingerPerson>;
+
+#[derive(Debug, Clone, PartialEq, ReplyError)]
+#[zlink(interface = "no.ntnu.pvv.roowho2.finger")]
+pub enum FingerClientError {
+    InvalidRequest,
+}
+
+// --------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+#[allow(unused)]
+enum Method {
+    Rwhod(RwhodClientRequest),
+    Finger(FingerClientRequest),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+#[allow(unused)]
+enum Reply {
+    Rwhod(RwhodClientResponse),
+    Finger(FingerClientResponse),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+#[allow(unused)]
+enum ReplyError {
+    Rwhod(RwhodClientError),
+    Finger(FingerClientError),
 }
 
 #[derive(Debug, Clone)]
