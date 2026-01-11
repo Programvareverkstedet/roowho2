@@ -23,5 +23,37 @@ Reimplementation of a subset of linux' netkit tools.
 - `ripquery`/`routed`: nuh-uh
 - `rpc*`: no need
 
+## Development
+
+> [!NOTE]
+> We have created some nix code to generate a QEMU VM with a setup similar to a production deployment
+> There is not necessarily any VMs running in a production setup, and if so then at least not this VM.
+> It is mainly there for easy access to interactive testing, as well as for testing the NixOS module.
+
+You can easily start developing this with nix, by running the test VM:
+
+```bash
+nix run .#vm
+```
+
+You can also build the nix package, or run the executable directly:
+
+```bash
+# Build package
+nix build .#
+
+# Run the executable (after building package)
+nix run .#
+```
+
+Within the VM, you will find several NixOS containers configured behind NAT with the container host, all running `roowhod`.
+These containers and the container host (the VM itself) will broadcast rwhod content between them in order to simulate a LAN
+with several machines connected. You can enter the different containers like this:
+
+```bash
+machinectl shell c1
+# Press 'Ctrl + ]' 3 times rapidly in a row to exit
+machinectl shell c2
+```
 
 <small>This product includes software developed by the University of California, Berkeley and its contributors.</small>
