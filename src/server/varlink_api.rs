@@ -89,11 +89,12 @@ impl zlink::Service for Roowhoo2ClientServer {
     type ReplyStream = futures_util::stream::Empty<zlink::Reply<()>>;
     type ReplyError<'se> = RwhodClientError;
 
-    async fn handle<'ser, 'de: 'ser, Sock: zlink::connection::Socket>(
-        &'ser mut self,
-        call: zlink::Call<Self::MethodCall<'de>>,
+    async fn handle<'service, Sock: zlink::connection::Socket>(
+        &'service mut self,
+        call: &'service zlink::Call<Self::MethodCall<'_>>,
         _conn: &mut zlink::Connection<Sock>,
-    ) -> MethodReply<Self::ReplyParams<'ser>, Self::ReplyStream, Self::ReplyError<'ser>> {
+    ) -> MethodReply<Self::ReplyParams<'service>, Self::ReplyStream, Self::ReplyError<'service>>
+    {
         match call.method() {
             RwhodClientRequest::Rwho { all } => MethodReply::Single(Some(
                 RwhodClientResponse::Rwho(self.handle_rwho_request(*all).await),
