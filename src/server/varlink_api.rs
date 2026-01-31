@@ -10,15 +10,20 @@ use crate::{
 // Types for 'no.ntnu.pvv.roowho2.rwhod'
 
 #[zlink::proxy("no.ntnu.pvv.roowho2.rwhod")]
-pub trait RwhodClientProxy {
-    async fn rwho(&mut self, all: bool) -> zlink::Result<Result<RwhoResponse, RwhodClientError>>;
+pub trait VarlinkRwhodClientProxy {
+    async fn rwho(
+        &mut self,
+        all: bool,
+    ) -> zlink::Result<Result<VarlinkRwhoResponse, VarlinkRwhodClientError>>;
 
-    async fn ruptime(&mut self) -> zlink::Result<Result<RuptimeResponse, RwhodClientError>>;
+    async fn ruptime(
+        &mut self,
+    ) -> zlink::Result<Result<VarlinkRuptimeResponse, VarlinkRwhodClientError>>;
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "method", content = "parameters")]
-pub enum RwhodClientRequest {
+pub enum VarlinkRwhodClientRequest {
     #[serde(rename = "no.ntnu.pvv.roowho2.rwhod.Rwho")]
     Rwho {
         /// Retrieve all users, even those that have been idle for a long time.
@@ -31,48 +36,48 @@ pub enum RwhodClientRequest {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
-pub enum RwhodClientResponse {
-    Rwho(RwhoResponse),
-    Ruptime(RuptimeResponse),
+pub enum VarlinkRwhodClientResponse {
+    Rwho(VarlinkRwhoResponse),
+    Ruptime(VarlinkRuptimeResponse),
 }
 
-pub type RwhoResponse = Vec<(String, WhodUserEntry)>;
-pub type RuptimeResponse = Vec<WhodStatusUpdate>;
+pub type VarlinkRwhoResponse = Vec<(String, WhodUserEntry)>;
+pub type VarlinkRuptimeResponse = Vec<WhodStatusUpdate>;
 
 #[derive(Debug, Clone, PartialEq, ReplyError)]
 #[zlink(interface = "no.ntnu.pvv.roowho2.rwhod")]
-pub enum RwhodClientError {
+pub enum VarlinkRwhodClientError {
     InvalidRequest,
 }
 
 // Types for 'no.ntnu.pvv.roowho2.finger'
 
 #[zlink::proxy("no.ntnu.pvv.roowho2.finger")]
-pub trait FingerClientProxy {
+pub trait VarlinkFingerClientProxy {
     async fn finger(
         &mut self,
         user_queries: Vec<String>,
-    ) -> zlink::Result<Result<ZlinkFingerResponse, FingerClientError>>;
+    ) -> zlink::Result<Result<VarlinkFingerResponse, VarlinkFingerClientError>>;
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "method", content = "parameters")]
-pub enum FingerClientRequest {
+pub enum VarlinkFingerClientRequest {
     #[serde(rename = "no.ntnu.pvv.roowho2.finger.Finger")]
     Finger { user_queries: Vec<String> },
 }
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
-pub enum FingerClientResponse {
-    Finger(ZlinkFingerResponse),
+pub enum VarlinkFingerClientResponse {
+    Finger(VarlinkFingerResponse),
 }
 
-pub type ZlinkFingerResponse = FingerResponse;
+pub type VarlinkFingerResponse = FingerResponse;
 
 #[derive(Debug, Clone, PartialEq, ReplyError)]
 #[zlink(interface = "no.ntnu.pvv.roowho2.finger")]
-pub enum FingerClientError {
+pub enum VarlinkFingerClientError {
     InvalidRequest,
 }
 
@@ -81,41 +86,41 @@ pub enum FingerClientError {
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 #[allow(unused)]
-pub enum Method {
-    Rwhod(RwhodClientRequest),
-    Finger(FingerClientRequest),
+pub enum VarlinkMethod {
+    Rwhod(VarlinkRwhodClientRequest),
+    Finger(VarlinkFingerClientRequest),
 }
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 #[allow(unused)]
-pub enum Reply {
-    Rwhod(RwhodClientResponse),
-    Finger(FingerClientResponse),
+pub enum VarlinkReply {
+    Rwhod(VarlinkRwhodClientResponse),
+    Finger(VarlinkFingerClientResponse),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 #[allow(unused)]
-pub enum ReplyError {
-    Rwhod(RwhodClientError),
-    Finger(FingerClientError),
+pub enum VarlinkReplyError {
+    Rwhod(VarlinkRwhodClientError),
+    Finger(VarlinkFingerClientError),
 }
 
 #[derive(Debug, Clone)]
-pub struct Roowhoo2ClientServer {
+pub struct VarlinkRoowhoo2ClientServer {
     whod_status_store: RwhodStatusStore,
 }
 
-impl Roowhoo2ClientServer {
+impl VarlinkRoowhoo2ClientServer {
     pub fn new(whod_status_store: RwhodStatusStore) -> Self {
         Self { whod_status_store }
     }
 }
 
-impl Roowhoo2ClientServer {
+impl VarlinkRoowhoo2ClientServer {
     // TODO: handle 'all' parameter
-    async fn handle_rwho_request(&self, _all: bool) -> RwhoResponse {
+    async fn handle_rwho_request(&self, _all: bool) -> VarlinkRwhoResponse {
         let store = self.whod_status_store.read().await;
 
         let mut all_user_entries = Vec::with_capacity(store.len());
@@ -132,18 +137,18 @@ impl Roowhoo2ClientServer {
         all_user_entries
     }
 
-    async fn handle_ruptime_request(&self) -> RuptimeResponse {
+    async fn handle_ruptime_request(&self) -> VarlinkRuptimeResponse {
         let store = self.whod_status_store.read().await;
         store.values().cloned().collect()
     }
 }
 
-impl zlink::Service for Roowhoo2ClientServer {
-    type MethodCall<'de> = Method;
-    type ReplyParams<'se> = Reply;
+impl zlink::Service for VarlinkRoowhoo2ClientServer {
+    type MethodCall<'de> = VarlinkMethod;
+    type ReplyParams<'se> = VarlinkReply;
     type ReplyStreamParams = ();
     type ReplyStream = futures_util::stream::Empty<zlink::Reply<()>>;
-    type ReplyError<'se> = ReplyError;
+    type ReplyError<'se> = VarlinkReplyError;
 
     async fn handle<'service, Sock: zlink::connection::Socket>(
         &'service mut self,
@@ -152,15 +157,17 @@ impl zlink::Service for Roowhoo2ClientServer {
     ) -> MethodReply<Self::ReplyParams<'service>, Self::ReplyStream, Self::ReplyError<'service>>
     {
         match call.method() {
-            Method::Rwhod(RwhodClientRequest::Rwho { all }) => {
-                MethodReply::Single(Some(Reply::Rwhod(RwhodClientResponse::Rwho(
+            VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Rwho { all }) => {
+                MethodReply::Single(Some(VarlinkReply::Rwhod(VarlinkRwhodClientResponse::Rwho(
                     self.handle_rwho_request(*all).await,
                 ))))
             }
-            Method::Rwhod(RwhodClientRequest::Ruptime) => MethodReply::Single(Some(Reply::Rwhod(
-                RwhodClientResponse::Ruptime(self.handle_ruptime_request().await),
-            ))),
-            Method::Finger(FingerClientRequest::Finger { user_queries: _ }) => {
+            VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Ruptime) => {
+                MethodReply::Single(Some(VarlinkReply::Rwhod(
+                    VarlinkRwhodClientResponse::Ruptime(self.handle_ruptime_request().await),
+                )))
+            }
+            VarlinkMethod::Finger(VarlinkFingerClientRequest::Finger { user_queries: _ }) => {
                 unimplemented!()
             }
         }
@@ -171,7 +178,7 @@ pub async fn varlink_client_server_task(
     socket: zlink::unix::Listener,
     whod_status_store: RwhodStatusStore,
 ) -> anyhow::Result<()> {
-    let service = Roowhoo2ClientServer::new(whod_status_store);
+    let service = VarlinkRoowhoo2ClientServer::new(whod_status_store);
 
     let server = zlink::Server::new(socket, service);
 

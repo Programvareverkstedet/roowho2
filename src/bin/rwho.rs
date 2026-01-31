@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use clap_complete::{Shell, generate};
-use roowho2_lib::{proto::WhodUserEntry, server::varlink_api::RwhodClientProxy};
+use roowho2_lib::{proto::WhodUserEntry, server::varlink_api::VarlinkRwhodClientProxy};
 
 /// Check who is logged in on local machines.
 ///

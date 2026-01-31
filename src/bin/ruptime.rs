@@ -3,7 +3,7 @@ use chrono::{Duration, Utc};
 use clap::{CommandFactory, Parser};
 use clap_complete::{Shell, generate};
 
-use roowho2_lib::{proto::WhodStatusUpdate, server::varlink_api::RwhodClientProxy};
+use roowho2_lib::{proto::WhodStatusUpdate, server::varlink_api::VarlinkRwhodClientProxy};
 
 /// Show host status of local machines.
 ///
