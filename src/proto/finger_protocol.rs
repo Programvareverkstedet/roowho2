@@ -1,5 +1,6 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[repr(C)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FingerRequest {
     long: bool,
     name: String,
@@ -38,7 +39,7 @@ impl FingerRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FingerResponse(String);
 
 impl FingerResponse {

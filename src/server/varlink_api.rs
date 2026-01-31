@@ -3,18 +3,17 @@ use serde::{Deserialize, Serialize};
 use zlink::{ReplyError, service::MethodReply};
 
 use crate::{
-    proto::{WhodStatusUpdate, WhodUserEntry},
+    proto::{WhodStatusUpdate, WhodUserEntry, finger_protocol::FingerResponse},
     server::rwhod::RwhodStatusStore,
 };
 
+// Types for 'no.ntnu.pvv.roowho2.rwhod'
+
 #[zlink::proxy("no.ntnu.pvv.roowho2.rwhod")]
 pub trait RwhodClientProxy {
-    async fn rwho(
-        &mut self,
-        all: bool,
-    ) -> zlink::Result<Result<Vec<(String, WhodUserEntry)>, RwhodClientError>>;
+    async fn rwho(&mut self, all: bool) -> zlink::Result<Result<RwhoResponse, RwhodClientError>>;
 
-    async fn ruptime(&mut self) -> zlink::Result<Result<Vec<WhodStatusUpdate>, RwhodClientError>>;
+    async fn ruptime(&mut self) -> zlink::Result<Result<RuptimeResponse, RwhodClientError>>;
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,7 +29,7 @@ pub enum RwhodClientRequest {
     Ruptime,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum RwhodClientResponse {
     Rwho(RwhoResponse),
@@ -40,10 +39,67 @@ pub enum RwhodClientResponse {
 pub type RwhoResponse = Vec<(String, WhodUserEntry)>;
 pub type RuptimeResponse = Vec<WhodStatusUpdate>;
 
-#[derive(Debug, ReplyError)]
+#[derive(Debug, Clone, PartialEq, ReplyError)]
 #[zlink(interface = "no.ntnu.pvv.roowho2.rwhod")]
 pub enum RwhodClientError {
     InvalidRequest,
+}
+
+// Types for 'no.ntnu.pvv.roowho2.finger'
+
+#[zlink::proxy("no.ntnu.pvv.roowho2.finger")]
+pub trait FingerClientProxy {
+    async fn finger(
+        &mut self,
+        user_queries: Vec<String>,
+    ) -> zlink::Result<Result<ZlinkFingerResponse, FingerClientError>>;
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "method", content = "parameters")]
+pub enum FingerClientRequest {
+    #[serde(rename = "no.ntnu.pvv.roowho2.finger.Finger")]
+    Finger { user_queries: Vec<String> },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum FingerClientResponse {
+    Finger(ZlinkFingerResponse),
+}
+
+pub type ZlinkFingerResponse = FingerResponse;
+
+#[derive(Debug, Clone, PartialEq, ReplyError)]
+#[zlink(interface = "no.ntnu.pvv.roowho2.finger")]
+pub enum FingerClientError {
+    InvalidRequest,
+}
+
+// --------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+#[allow(unused)]
+pub enum Method {
+    Rwhod(RwhodClientRequest),
+    Finger(FingerClientRequest),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+#[allow(unused)]
+pub enum Reply {
+    Rwhod(RwhodClientResponse),
+    Finger(FingerClientResponse),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+#[allow(unused)]
+pub enum ReplyError {
+    Rwhod(RwhodClientError),
+    Finger(FingerClientError),
 }
 
 #[derive(Debug, Clone)]
@@ -83,11 +139,11 @@ impl Roowhoo2ClientServer {
 }
 
 impl zlink::Service for Roowhoo2ClientServer {
-    type MethodCall<'de> = RwhodClientRequest;
-    type ReplyParams<'se> = RwhodClientResponse;
+    type MethodCall<'de> = Method;
+    type ReplyParams<'se> = Reply;
     type ReplyStreamParams = ();
     type ReplyStream = futures_util::stream::Empty<zlink::Reply<()>>;
-    type ReplyError<'se> = RwhodClientError;
+    type ReplyError<'se> = ReplyError;
 
     async fn handle<'service, Sock: zlink::connection::Socket>(
         &'service mut self,
@@ -96,12 +152,17 @@ impl zlink::Service for Roowhoo2ClientServer {
     ) -> MethodReply<Self::ReplyParams<'service>, Self::ReplyStream, Self::ReplyError<'service>>
     {
         match call.method() {
-            RwhodClientRequest::Rwho { all } => MethodReply::Single(Some(
-                RwhodClientResponse::Rwho(self.handle_rwho_request(*all).await),
-            )),
-            RwhodClientRequest::Ruptime => MethodReply::Single(Some(RwhodClientResponse::Ruptime(
-                self.handle_ruptime_request().await,
+            Method::Rwhod(RwhodClientRequest::Rwho { all }) => {
+                MethodReply::Single(Some(Reply::Rwhod(RwhodClientResponse::Rwho(
+                    self.handle_rwho_request(*all).await,
+                ))))
+            }
+            Method::Rwhod(RwhodClientRequest::Ruptime) => MethodReply::Single(Some(Reply::Rwhod(
+                RwhodClientResponse::Ruptime(self.handle_ruptime_request().await),
             ))),
+            Method::Finger(FingerClientRequest::Finger { user_queries: _ }) => {
+                unimplemented!()
+            }
         }
     }
 }
