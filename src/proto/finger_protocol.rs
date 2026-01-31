@@ -105,3 +105,31 @@ impl FingerResponse {
         out
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_finger_serialization_roundrip() {
+        let request = FingerRequest::new(true, "alice".to_string());
+        let bytes = request.to_bytes();
+        let deserialized = FingerRequest::from_bytes(&bytes);
+        assert_eq!(request, deserialized);
+
+        let request2 = FingerRequest::new(false, "bob".to_string());
+        let bytes2 = request2.to_bytes();
+        let deserialized2 = FingerRequest::from_bytes(&bytes2);
+        assert_eq!(request2, deserialized2);
+
+        let response = FingerResponse::new("Hello, World!\nThis is a test.\n".to_string());
+        let response_bytes = response.to_bytes();
+        let deserialized_response = FingerResponse::from_bytes(&response_bytes);
+        assert_eq!(response, deserialized_response);
+
+        let response2 = FingerResponse::new("Single line response\n".to_string());
+        let response_bytes2 = response2.to_bytes();
+        let deserialized_response2 = FingerResponse::from_bytes(&response_bytes2);
+        assert_eq!(response2, deserialized_response2);
+    }
+}
