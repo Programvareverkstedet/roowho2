@@ -53,7 +53,60 @@ in {
         Restart = "on-failure";
         DynamicUser = true;
 
-        # TODO: hardening
+        # NOTE: roowho2 might at some point need to read from home directories
+        #       to get user settings, so let's keep these disabled for now.
+        # PrivateUsers = true;
+        # ProtectHome = true;
+
+        AmbientCapabilities = "";
+        CapabilityBoundingSet = "";
+        DeviceAllow = "";
+        DevicePolicy = "closed";
+        LockPersonality = true;
+        MemoryDenyWriteExecute = true;
+        NoNewPrivileges = true;
+        PrivateDevices = true;
+        # NOTE: all ipc traffic is served through the socket activation fds or provided by systemd
+        PrivateIPC = true;
+        PrivateMounts = true;
+        PrivateTmp = true;
+        ProcSubset = "pid";
+        ProtectClock = true;
+        ProtectControlGroups = "strict";
+        ProtectHostname = true;
+        ProtectKernelLogs = true;
+        ProtectKernelModules = true;
+        ProtectKernelTunables = true;
+        ProtectProc = "invisible";
+        RemoveIPC = true;
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_INET6"
+          "AF_UNIX"
+          "AF_NETLINK"
+        ];
+        RestrictNamespaces = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        SocketBindDeny = "any";
+        SystemCallArchitectures = "native";
+        SystemCallFilter = [
+          "@system-service"
+          "~@privileged"
+          "~@resources"
+        ];
+
+        RuntimeDirectory = "roowho2/root-mnt";
+        RuntimeDirectoryMode = "0700";
+        RootDirectory = "/run/roowho2/root-mnt";
+        BindReadOnlyPaths = [
+          builtins.storeDir
+          "/etc"
+          # NOTE: need logind socket for utmp entries
+          "/run/systemd"
+        ];
+
+        UMask = "0077";
       };
     };
 
