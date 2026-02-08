@@ -55,6 +55,10 @@ impl FingerResponse {
         self.0
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     pub fn from_bytes(bytes: &[u8]) -> Self {
         if bytes.is_empty() {
             return Self(String::new());
@@ -104,6 +108,24 @@ impl FingerResponse {
         }
 
         out
+    }
+}
+
+impl Default for FingerResponse {
+    fn default() -> Self {
+        Self(String::new())
+    }
+}
+
+impl From<String> for FingerResponse {
+    fn from(s: String) -> Self {
+        Self::new(s)
+    }
+}
+
+impl From<&str> for FingerResponse {
+    fn from(s: &str) -> Self {
+        Self::new(s.to_string())
     }
 }
 

@@ -41,7 +41,7 @@ rustPlatform.buildRustPackage {
       installShellCompletion "--${shell}" --cmd "${command}" "$TMP/${command}.${shell}"
     '') {
       shell = [ "bash" "zsh" "fish" ];
-      command = [ "rwho" "ruptime" ];
+      command = [ "rwho" "ruptime" "finger" ];
     };
   in lib.concatStringsSep "\n" installShellCompletions;
 

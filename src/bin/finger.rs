@@ -1,4 +1,7 @@
-use clap::Parser;
+use anyhow::Context;
+use clap::{CommandFactory, Parser};
+use clap_complete::{Shell, generate};
+use roowho2_lib::server::varlink_api::VarlinkFingerClientProxy;
 
 /// User information lookup program
 ///
@@ -22,7 +25,7 @@ use clap::Parser;
 #[command(
     author = "Programvareverkstedet <projects@pvv.ntnu.no>",
     about,
-    version,
+    version
 )]
 pub struct Args {
     /// Forces finger to use IPv4 addresses only.
@@ -51,7 +54,7 @@ pub struct Args {
 
     /// When used in conjunction with the -s option, the name of the remote host
     /// is displayed instead of the office location and office phone.
-    #[arg(long, short, requires = "short", conflicts_with = "office")]
+    #[arg(long, short = 'H', requires = "short", conflicts_with = "office")]
     host: bool,
 
     /// When used in conjunction with the -s option, the office location and
@@ -106,9 +109,41 @@ pub struct Args {
     /// Output in JSON format
     #[arg(long, short)]
     json: bool,
+
+    /// Generate shell completion scripts for the specified shell
+    /// and print them to stdout.
+    #[arg(long, value_enum, hide = true)]
+    completions: Option<Shell>,
+
+    users: Vec<String>,
 }
 
-fn main() {
-    let _args = Args::parse();
-    unimplemented!()
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+
+    if let Some(shell) = args.completions {
+        generate(shell, &mut Args::command(), "rwho", &mut std::io::stdout());
+        return Ok(());
+    }
+
+    let mut conn = zlink::unix::connect("/run/roowho2/roowho2.varlink")
+        .await
+        .expect("Failed to connect to fingerd server");
+
+    let reply = conn
+        .finger(args.users)
+        .await
+        .context("Failed to send finger request")?
+        .map_err(|e| anyhow::anyhow!("Server returned an error for finger request: {:?}", e))?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&reply).unwrap());
+    } else {
+        for user in reply {
+            println!("{:#?}", user.unwrap());
+        }
+    }
+
+    Ok(())
 }

@@ -4,7 +4,7 @@ use zlink::{ReplyError, service::MethodReply};
 
 use crate::{
     proto::{WhodStatusUpdate, WhodUserEntry, finger_protocol::FingerResponse},
-    server::rwhod::RwhodStatusStore,
+    server::{fingerd::{self, FingerUserEntry}, rwhod::RwhodStatusStore},
 };
 
 // Types for 'no.ntnu.pvv.roowho2.rwhod'
@@ -73,7 +73,7 @@ pub enum VarlinkFingerClientResponse {
     Finger(VarlinkFingerResponse),
 }
 
-pub type VarlinkFingerResponse = FingerResponse;
+pub type VarlinkFingerResponse = Vec<Option<FingerUserEntry>>;
 
 #[derive(Debug, Clone, PartialEq, ReplyError)]
 #[zlink(interface = "no.ntnu.pvv.roowho2.finger")]
@@ -141,6 +141,13 @@ impl VarlinkRoowhoo2ClientServer {
         let store = self.whod_status_store.read().await;
         store.values().cloned().collect()
     }
+
+    async fn handle_finger_request(&self, user_queries: Vec<String>) -> VarlinkFingerResponse {
+        user_queries
+            .into_iter()
+            .map(|username| fingerd::get_local_user(&username).unwrap())
+            .collect()
+    }
 }
 
 impl zlink::Service for VarlinkRoowhoo2ClientServer {
@@ -167,8 +174,12 @@ impl zlink::Service for VarlinkRoowhoo2ClientServer {
                     VarlinkRwhodClientResponse::Ruptime(self.handle_ruptime_request().await),
                 )))
             }
-            VarlinkMethod::Finger(VarlinkFingerClientRequest::Finger { user_queries: _ }) => {
-                unimplemented!()
+            VarlinkMethod::Finger(VarlinkFingerClientRequest::Finger { user_queries }) => {
+                MethodReply::Single(Some(VarlinkReply::Finger(
+                    VarlinkFingerClientResponse::Finger(
+                        self.handle_finger_request(user_queries.clone()).await,
+                    ),
+                )))
             }
         }
     }

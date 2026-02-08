@@ -34,6 +34,7 @@ nixpkgs.lib.nixosSystem {
         Try running any of:
             rwho
             ruptime
+            finger "alice"
 
         To log into other containers, use:
             machinectl shell c1

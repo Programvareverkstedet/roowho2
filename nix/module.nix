@@ -18,6 +18,13 @@ in {
 
             # TODO: allow configuring socket config
           };
+          fingerd = {
+            enable = lib.mkEnableOption "the fingerd service" // {
+              default = true;
+            };
+
+            # TODO: allow configuring socket config
+          };
         };
       };
       default = { };

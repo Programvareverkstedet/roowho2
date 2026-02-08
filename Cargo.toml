@@ -21,7 +21,7 @@ bytes = "1.11.0"
 chrono = { version = "0.4.43", features = ["serde"] }
 clap = { version = "4.5.54", features = ["derive"] }
 futures-util = "0.3.31"
-nix = { version = "0.31.1", features = ["hostname", "net", "fs"] }
+nix = { version = "0.31.1", features = ["hostname", "net", "fs", "user"] }
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "0.9.11"
@@ -47,10 +47,10 @@ name = "roowhod"
 bench = false
 path = "src/bin/roowhod.rs"
 
-# [[bin]]
-# name = "finger"
-# bench = false
-# path = "src/bin/finger.rs"
+[[bin]]
+name = "finger"
+bench = false
+path = "src/bin/finger.rs"
 
 # [[bin]]
 # name = "rup"
