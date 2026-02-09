@@ -474,5 +474,11 @@ mod tests {
         assert_eq!(user_entry.sessions[0].host, "host.example.com");
     }
 
+    #[test]
+    fn test_finger_root() {
+        let user_entry = get_local_user("root").unwrap().unwrap();
+        assert_eq!(user_entry.username, "root");
+    }
+
     // TODO: test serialization roundtrip
 }

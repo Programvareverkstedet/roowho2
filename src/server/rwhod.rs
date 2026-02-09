@@ -240,3 +240,22 @@ pub async fn rwhod_packet_sender_task(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_determine_relevant_interfaces() {
+        let interfaces = determine_relevant_interfaces().unwrap();
+        for interface in interfaces {
+            println!("Interface: {} Address: {}", interface.name, interface.addr);
+        }
+    }
+
+    #[test]
+    fn test_generate_rwhod_status_update() {
+        let status_update = generate_rwhod_status_update().unwrap();
+        println!("{:?}", status_update);
+    }
+}
