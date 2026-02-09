@@ -1,9 +1,11 @@
 use std::{
-    net::{SocketAddr, ToSocketAddrs},
+    net::{SocketAddr, ToSocketAddrs, hostname},
     path::{Path, PathBuf},
 };
 
-use chrono::{DateTime, Duration, TimeDelta, Timelike, Utc};
+use chrono::{
+    DateTime, Datelike, Duration, NaiveDate, NaiveTime, TimeDelta, Timelike, Utc, Weekday,
+};
 use nix::sys::stat::stat;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -21,6 +23,7 @@ pub struct FingerUserEntry {
     pub home_dir: PathBuf,
     pub shell: PathBuf,
     pub sessions: Vec<FingerUserSession>,
+    pub pgp_key: Option<String>,
     pub forward_status: Option<String>,
     pub mail_status: Option<String>,
     pub plan: Option<String>,
@@ -33,6 +36,7 @@ impl FingerUserEntry {
         home_dir: PathBuf,
         shell: PathBuf,
         sessions: Vec<FingerUserSession>,
+        pgp_key: Option<String>,
         forward_status: Option<String>,
         mail_status: Option<String>,
         plan: Option<String>,
@@ -43,6 +47,7 @@ impl FingerUserEntry {
             home_dir,
             shell,
             sessions,
+            pgp_key,
             forward_status,
             mail_status,
             plan,
@@ -84,7 +89,7 @@ impl FingerUserEntry {
             .nth(1)
             .and_then(|s| s.split("Shell:").next())
             .map(|s| s.trim())
-            .and_then(|s| Some(PathBuf::from(s)))
+            .map(PathBuf::from)
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Failed to parse home directory from finger response for user {}",
@@ -96,7 +101,7 @@ impl FingerUserEntry {
             .split("Shell:")
             .nth(1)
             .map(|s| s.trim())
-            .and_then(|s| Some(PathBuf::from(s)))
+            .map(PathBuf::from)
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Failed to parse shell from finger response for user {}",
@@ -120,7 +125,7 @@ impl FingerUserEntry {
         // TODO: parse forward_status, mail_status, plan from remaining lines
 
         Ok(Self::new(
-            username, full_name, home_dir, shell, sessions, None, None, None,
+            username, full_name, home_dir, shell, sessions, None, None, None, None,
         ))
     }
 }
@@ -143,52 +148,160 @@ impl FingerUserSession {
         }
     }
 
+    fn parse_login_time(time: &str, _timezone: &str) -> anyhow::Result<DateTime<Utc>> {
+        let now = Utc::now();
+        let mut parts = time.split_whitespace();
+
+        let weekday = match parts.next() {
+            Some("Mon") => Weekday::Mon,
+            Some("Tue") => Weekday::Tue,
+            Some("Wed") => Weekday::Wed,
+            Some("Thu") => Weekday::Thu,
+            Some("Fri") => Weekday::Fri,
+            Some("Sat") => Weekday::Sat,
+            Some("Sun") => Weekday::Sun,
+            _ => anyhow::bail!("Invalid weekday in login time: {}", time),
+        };
+
+        let month = match parts.next() {
+            Some("Jan") => 1,
+            Some("Feb") => 2,
+            Some("Mar") => 3,
+            Some("Apr") => 4,
+            Some("May") => 5,
+            Some("Jun") => 6,
+            Some("Jul") => 7,
+            Some("Aug") => 8,
+            Some("Sep") => 9,
+            Some("Oct") => 10,
+            Some("Nov") => 11,
+            Some("Dec") => 12,
+            _ => anyhow::bail!("Invalid month in login time: {}", time),
+        };
+
+        let day: u32 = parts
+            .next()
+            .and_then(|d| d.parse().ok())
+            .ok_or_else(|| anyhow::anyhow!("Invalid day in login time: {}", time))?;
+
+        let time_part = parts
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Missing time in login time: {}", time))?;
+
+        let clock = NaiveTime::parse_from_str(time_part, "%H:%M").map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to parse time component in login time: {}: {}",
+                time,
+                e
+            )
+        })?;
+
+        const MAX_YEARS_BACK: i32 = 10;
+
+        for offset in 0..=MAX_YEARS_BACK {
+            let year = now.year() - offset;
+
+            let date = match NaiveDate::from_ymd_opt(year, month, day) {
+                Some(d) => d,
+                None => continue,
+            };
+
+            if date.weekday() != weekday {
+                continue;
+            }
+
+            let dt = date.and_time(clock);
+
+            if dt <= now.naive_utc() {
+                // TODO: apply timezone if we are able to parse it.
+                //       if not, try to get the local timezone offset.
+                //       if not, assume UTC.
+
+                return Ok(DateTime::<Utc>::from_utc(dt, Utc));
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "Could not infer year for login time {} within {} years",
+            time,
+            MAX_YEARS_BACK
+        ))
+    }
+
+    fn parse_idle_time(str: &str) -> anyhow::Result<Duration> {
+        // Parse idle time from finger response format.
+        // This has four cases: "    ", "MMMMM", "HH:MM", "DDd"
+        if str.trim().is_empty() {
+            Ok(Duration::zero())
+        } else if str.contains(':') {
+            let parts: Vec<&str> = str.split(':').collect();
+            if parts.len() != 2 {
+                return Err(anyhow::anyhow!("Invalid idle time format: {}", str));
+            }
+            let hours: i64 = parts[0].parse().map_err(|e| {
+                anyhow::anyhow!("Failed to parse hours from idle time {}: {}", str, e)
+            })?;
+            let minutes: i64 = parts[1].parse().map_err(|e| {
+                anyhow::anyhow!("Failed to parse minutes from idle time {}: {}", str, e)
+            })?;
+            Ok(Duration::hours(hours) + Duration::minutes(minutes))
+        } else if str.ends_with('d') {
+            let days_str = str.trim_end_matches('d');
+            let days: i64 = days_str.parse().map_err(|e| {
+                anyhow::anyhow!("Failed to parse days from idle time {}: {}", str, e)
+            })?;
+            Ok(Duration::days(days))
+        } else {
+            let minutes: i64 = str.parse().map_err(|e| {
+                anyhow::anyhow!("Failed to parse minutes from idle time {}: {}", str, e)
+            })?;
+            Ok(Duration::minutes(minutes))
+        }
+    }
+
     /// Try parsing a user session from the text format used by the classic finger implementations.
     pub fn try_from_finger_response_line(line: &str) -> anyhow::Result<Self> {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 6 {
-            return Err(anyhow::anyhow!(
-                "Unexpected finger session line format: {}",
-                line
-            ));
-        }
 
-        let tty = parts[2].to_string();
+        debug_assert!(parts[0] == "On");
+        debug_assert!(parts[1] == "since");
 
-        let login_time_str = format!("{} {} {} {}", parts[4], parts[5], parts[6], parts[7]);
-        let login_time = DateTime::parse_from_str(&login_time_str, "%a %b %e %H:%M (%Z)")
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to parse login time from finger session line: {}: {}",
-                    line,
-                    e
-                )
+        let login_time_parts = parts
+            .iter()
+            .take_while(|&&s| s != "on")
+            .skip(2)
+            .cloned()
+            .collect::<Vec<&str>>();
+
+        let login_time = Self::parse_login_time(
+            &login_time_parts[..login_time_parts.len() - 1].join(" "),
+            login_time_parts[login_time_parts.len() - 1],
+        )?;
+
+        let tty = parts
+            .iter()
+            .skip_while(|&&s| s != "on")
+            .nth(1)
+            .ok_or_else(|| anyhow::anyhow!("Failed to find tty in finger session line: {line}"))?
+            .trim_end_matches(',')
+            .to_string();
+
+        let idle_time_str = parts
+            .iter()
+            .skip_while(|&&s| s != "idle")
+            .nth(1)
+            .ok_or_else(|| {
+                anyhow::anyhow!("Failed to find idle time in finger session line: {line}")
             })?
-            .with_timezone(&Utc);
+            .trim_end_matches(',');
+        let idle_time = Self::parse_idle_time(idle_time_str)?;
 
-        //
-
-        // let idle_time = if let Some(idle_index) = parts.iter().position(|&s| s == "idle")
-        //     && idle_index + 1 < parts.len()
-        // {
-        //     let idle_str = parts[idle_index + 1];
-        //     let idle_parts: Vec<&str> = idle_str.split(':').collect();
-        //     if idle_parts.len() == 2 {
-        //         let hours: i64 = idle_parts[0].parse().unwrap_or(0);
-        //         let minutes: i64 = idle_parts[1].parse().unwrap_or(0);
-        //         Duration::hours(hours) + Duration::minutes(minutes)
-        //     } else {
-        //         Duration::zero()
-        //     }
-        // } else {
-        //     Duration::zero()
-        // };
-
-        let host = if parts.len() > 7 {
-            parts[7..].join(" ")
-        } else {
-            "".to_string()
-        };
+        let host = parts
+            .iter()
+            .skip_while(|&&s| s != "from")
+            .nth(1)
+            .unwrap_or(&"")
+            .to_string();
 
         Ok(Self {
             tty,
@@ -220,11 +333,13 @@ pub fn get_local_user(username: &str) -> anyhow::Result<Option<FingerUserEntry>>
     let home_dir = user_entry.dir.clone();
     let shell = user_entry.shell;
 
+    let hostname = hostname()?.to_str().unwrap_or("localhost").to_string();
+
     let now = Utc::now().with_nanosecond(0).unwrap_or(Utc::now());
     let sessions: Vec<FingerUserSession> = Utmpx::iter_all_records()
         .filter(|entry| entry.user() == username)
         .filter(|entry| entry.is_user_process())
-        .map(|entry| {
+        .filter_map(|entry| {
             let login_time = entry
                 .login_time()
                 .checked_to_utc()
@@ -247,10 +362,9 @@ pub fn get_local_user(username: &str) -> anyhow::Result<Option<FingerUserEntry>>
                 entry.tty_device(),
                 login_time,
                 idle_time,
-                String::new(), // Host information is not available from local utmpx
+                hostname.clone(),
             ))
         })
-        .flatten()
         .collect();
 
     let forward_path = user_entry.dir.join(".forward");
@@ -269,7 +383,7 @@ pub fn get_local_user(username: &str) -> anyhow::Result<Option<FingerUserEntry>>
     };
 
     Ok(Some(FingerUserEntry::new(
-        username, full_name, home_dir, shell, sessions, forward, plan, None,
+        username, full_name, home_dir, shell, sessions, None, forward, plan, None,
     )))
 }
 
@@ -312,14 +426,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_parse_idle_time() {
+        let cases = vec![("    ", 0), ("5", 5), ("1:30", 90), ("2d", 2880)];
+
+        for (input, expected_minutes) in cases {
+            let duration = FingerUserSession::parse_idle_time(input).unwrap();
+            assert_eq!(
+                duration.num_minutes(),
+                expected_minutes,
+                "Failed on input: {}",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn test_finger_user_session_parsing() {
+        let line = "On since Mon Mar  1 10:00 (UTC) on pts/0, idle 5:00, from host.example.com";
+        let session = FingerUserSession::try_from_finger_response_line(line).unwrap();
+        assert_eq!(session.tty, "pts/0");
+        assert_eq!(session.host, "host.example.com");
+        assert_eq!(session.login_time.weekday(), Weekday::Mon);
+        assert_eq!(session.login_time.hour(), 10);
+        assert_eq!(session.idle_time.num_minutes(), 300);
+    }
+
+    #[test]
     fn test_finger_user_entry_parsing() {
-        let response_content = "
-Login: alice           			Name: Alice Wonderland
-Directory: /home/alice             	Shell: /bin/bash
-On since Mon Mar  1 10:00 (UTC) on pts/0, idle 5:00, from host.example.com
-No Mail.
-No Plan.
-"
+        let response_content = indoc::indoc! {"
+              Login: alice           			Name: Alice Wonderland
+              Directory: /home/alice             	Shell: /bin/bash
+              On since Mon Mar  1 10:00 (UTC) on pts/0, idle 5:00, from host.example.com
+              No Mail.
+              No Plan.
+            "}
         .trim();
 
         let response = FingerResponse::from(response_content.to_string());

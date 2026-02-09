@@ -39,7 +39,7 @@ impl FingerRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct FingerResponse(String);
 
 impl FingerResponse {
@@ -108,12 +108,6 @@ impl FingerResponse {
         }
 
         out
-    }
-}
-
-impl Default for FingerResponse {
-    fn default() -> Self {
-        Self(String::new())
     }
 }
 

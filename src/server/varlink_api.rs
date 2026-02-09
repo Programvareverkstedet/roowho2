@@ -3,8 +3,11 @@ use serde::{Deserialize, Serialize};
 use zlink::{ReplyError, service::MethodReply};
 
 use crate::{
-    proto::{WhodStatusUpdate, WhodUserEntry, finger_protocol::FingerResponse},
-    server::{fingerd::{self, FingerUserEntry}, rwhod::RwhodStatusStore},
+    proto::{WhodStatusUpdate, WhodUserEntry},
+    server::{
+        fingerd::{self, FingerUserEntry},
+        rwhod::RwhodStatusStore,
+    },
 };
 
 // Types for 'no.ntnu.pvv.roowho2.rwhod'
