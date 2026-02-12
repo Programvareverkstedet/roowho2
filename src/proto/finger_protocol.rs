@@ -242,16 +242,19 @@ pub struct FingerResponseUserEntry {
     /// A list of user sessions, sourced from utmp entries
     pub sessions: Vec<FingerResponseUserSession>,
 
-    /// Contents of ~/.pgpkey, if it exists
-    pub pgp_key: Option<String>,
-
     /// Contents of ~/.forward, if it exists
     pub forward_status: Option<String>,
 
     /// Whether the user has new or unread mail
     pub mail_status: Option<MailStatus>,
 
-    /// Contents of ~/.plan or ~/.project, if either exists
+    /// Contents of ~/.pgpkey, if it exists
+    pub pgp_key: Option<String>,
+
+    /// Contents of ~/.project, if it exists
+    pub project: Option<String>,
+
+    /// Contents of ~/.plan, if it exists
     pub plan: Option<String>,
 }
 
@@ -266,9 +269,10 @@ impl FingerResponseUserEntry {
         home_phone: Option<String>,
         never_logged_in: bool,
         sessions: Vec<FingerResponseUserSession>,
-        pgp_key: Option<String>,
         forward_status: Option<String>,
         mail_status: Option<MailStatus>,
+        pgp_key: Option<String>,
+        project: Option<String>,
         plan: Option<String>,
     ) -> Self {
         debug_assert!(
@@ -286,9 +290,10 @@ impl FingerResponseUserEntry {
             home_phone,
             never_logged_in,
             sessions,
-            pgp_key,
             forward_status,
             mail_status,
+            pgp_key,
+            project,
             plan,
         }
     }
@@ -348,15 +353,49 @@ impl FingerResponseUserEntry {
                 )
             })?;
 
+        let mut current_index = 2;
+
+        let mut office: Option<String> = None;
+        let mut office_phone: Option<String> = None;
+        let mut home_phone: Option<String> = None;
+
+        // TODO: handle case where office details contains comma, use last comma as separator
+        if let Some(line) = lines.get(current_index)
+            && line.trim().starts_with("Office:")
+        {
+            let office_line = line.trim().trim_start_matches("Office:").trim();
+            if let Some((office_loc, phone)) = office_line.split_once(',') {
+                office = Some(office_loc.trim().to_string());
+                office_phone = Some(phone.trim().to_string());
+            } else {
+                office = Some(office_line.to_string());
+            }
+            current_index += 1;
+        }
+        if let Some(line) = lines.get(current_index)
+            && line.trim().starts_with("Office Phone:")
+        {
+            let phone = line.trim().trim_start_matches("Office Phone:").trim();
+            office_phone = Some(phone.to_string());
+            current_index += 1;
+        }
+        if let Some(line) = lines.get(current_index)
+            && line.trim().starts_with("Home Phone:")
+        {
+            let phone = line.trim().trim_start_matches("Home Phone:").trim();
+            home_phone = Some(phone.to_string());
+            current_index += 1;
+        }
+
         let never_logged_in = lines
             .iter()
-            .skip(2)
+            .skip(current_index)
             .take(1)
             .any(|&line| line.trim() == "Never logged in.");
 
-        let sessions = lines
+        let sessions: Vec<_> = lines
             .iter()
-            .skip(2)
+            .skip(current_index)
             .take_while(|line| line.starts_with("On since"))
             .filter_map(|line| {
                 match FingerResponseUserSession::try_from_finger_response_line(line) {
@@ -367,6 +406,26 @@ impl FingerResponseUserEntry {
             })
             .collect();
 
+        if never_logged_in {
+            debug_assert!(
+                sessions.is_empty(),
+                "User cannot be marked as never logged in while having active sessions"
+            );
+        }
+
+        current_index += if never_logged_in { 1 } else { sessions.len() };
+
+        let next_line = lines.get(current_index);
+
+        // TODO: handle multi-line case
+        let forward_status = if let Some(line) = next_line
+            && line.trim().starts_with("Mail forwarded to ")
+        {
+            Some(line.trim().trim_prefix("Mail forwarded to ").to_string())
+        } else {
+            None
+        };
+
         // TODO: parse forward_status, mail_status, plan from remaining lines
 
         Ok(Self::new(
@@ -374,11 +433,12 @@ impl FingerResponseUserEntry {
             full_name,
             home_dir,
             shell,
-            None,
-            None,
-            None,
+            office,
+            office_phone,
+            home_phone,
             never_logged_in,
             sessions,
+            forward_status,
             None,
             None,
             None,
@@ -427,15 +487,25 @@ pub struct FingerResponseUserSession {
 
     /// The hostname of the machine where this session is running
     pub host: String,
+
+    /// Whether this tty is writable, and thus can receive messages via `mesg(1)`
+    pub messages_on: bool,
 }
 
 impl FingerResponseUserSession {
-    pub fn new(tty: String, login_time: DateTime<Utc>, idle_time: TimeDelta, host: String) -> Self {
+    pub fn new(
+        tty: String,
+        login_time: DateTime<Utc>,
+        idle_time: TimeDelta,
+        host: String,
+        messages_on: bool,
+    ) -> Self {
         Self {
             tty,
             login_time,
             idle_time,
             host,
+            messages_on,
         }
     }
 
@@ -514,11 +584,14 @@ impl FingerResponseUserSession {
             .unwrap_or(&"")
             .to_string();
 
+        let messages_on = !line.ends_with("(messages off)");
+
         Ok(Self {
             tty,
             login_time,
             idle_time,
             host,
+            messages_on,
         })
     }
 }
@@ -595,10 +668,21 @@ mod tests {
         assert_eq!(session.login_time.weekday(), Weekday::Mon);
         assert_eq!(session.login_time.hour(), 10);
         assert_eq!(session.idle_time.num_minutes(), 300);
+        assert!(session.messages_on);
+
+        let line_off = "On since Mon Mar  1 10:00 (UTC) on pts/1, idle 10, from another.host.com (messages off)";
+        let session_off =
+            FingerResponseUserSession::try_from_finger_response_line(line_off).unwrap();
+        assert_eq!(session_off.tty, "pts/1");
+        assert_eq!(session_off.host, "another.host.com");
+        assert_eq!(session_off.login_time.weekday(), Weekday::Mon);
+        assert_eq!(session_off.login_time.hour(), 10);
+        assert_eq!(session_off.idle_time.num_minutes(), 10);
+        assert!(!session_off.messages_on);
     }
 
     #[test]
-    fn test_basic_finger_user_entry_parsing() {
+    fn test_finger_user_entry_parsing_basic() {
         let response_content = indoc::indoc! {"
               Login: alice           			Name: Alice Wonderland
               Directory: /home/alice             	Shell: /bin/bash
@@ -622,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn test_single_line_office_phone_finger_user_entry_parsing() {
+    fn test_finger_user_entry_parsing_single_line_office_phone() {
         let response_content = indoc::indoc! {"
               Login: alice           			Name: Alice Wonderland
               Directory: /home/alice             	Shell: /bin/bash
@@ -638,10 +722,14 @@ mod tests {
         let user_entry =
             FingerResponseUserEntry::try_from_raw_finger_response(&response, "alice".to_string())
                 .unwrap();
+
+        assert_eq!(user_entry.office, Some("123 Main St".to_string()));
+        assert_eq!(user_entry.office_phone, Some("012-345-6789".to_string()));
+        assert_eq!(user_entry.home_phone, Some("+0-123-456-7890".to_string()));
     }
 
     #[test]
-    fn test_multiline_office_phone_finger_user_entry_parsing() {
+    fn test_finger_user_entry_parsing_multiline_office_phone() {
         let response_content = indoc::indoc! {"
               Login: alice           			Name: Alice Wonderland
               Directory: /home/alice             	Shell: /bin/bash
@@ -658,5 +746,29 @@ mod tests {
         let user_entry =
             FingerResponseUserEntry::try_from_raw_finger_response(&response, "alice".to_string())
                 .unwrap();
+
+        assert_eq!(user_entry.office, Some("123 Main St".to_string()));
+        assert_eq!(user_entry.office_phone, Some("012-345-6789".to_string()));
+        assert_eq!(user_entry.home_phone, Some("+0-123-456-7890".to_string()));
+    }
+
+    #[test]
+    fn test_finger_user_entry_parsing_never_logged_in() {
+        let response_content = indoc::indoc! {"
+              Login: bob           			Name: Bob Builder
+              Directory: /home/bob             	Shell: /bin/zsh
+              Never logged in.
+              No Mail.
+              No Plan.
+            "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry =
+            FingerResponseUserEntry::try_from_raw_finger_response(&response, "bob".to_string())
+                .unwrap();
+
+        assert!(user_entry.never_logged_in);
+        assert!(user_entry.sessions.is_empty());
     }
 }
