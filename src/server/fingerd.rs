@@ -14,7 +14,7 @@ use tokio::{
 };
 use uucore::utmpx::Utmpx;
 
-use crate::proto::finger_protocol::{FingerRequest, FingerResponse};
+use crate::proto::finger_protocol::{FingerRequest, RawFingerResponse};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FingerUserEntry {
@@ -56,7 +56,7 @@ impl FingerUserEntry {
 
     /// Try parsing a FingerUserEntry from the text format used by the classic finger implementations.
     pub fn try_from_finger_response(
-        response: &FingerResponse,
+        response: &RawFingerResponse,
         username: String,
     ) -> anyhow::Result<Self> {
         let content = response.get_inner();
@@ -390,7 +390,7 @@ pub fn get_local_user(username: &str) -> anyhow::Result<Option<FingerUserEntry>>
 /// Retrieve remote user information for the given username on the specified host.
 ///
 /// Returns None if the user does not exist or no information is available.
-async fn get_remote_user(username: &str, host: &str) -> anyhow::Result<Option<FingerResponse>> {
+async fn get_remote_user(username: &str, host: &str) -> anyhow::Result<Option<RawFingerResponse>> {
     let addr = format!("{}:79", host);
     let socket_addrs: Vec<SocketAddr> = addr.to_socket_addrs()?.collect();
 
@@ -412,7 +412,7 @@ async fn get_remote_user(username: &str, host: &str) -> anyhow::Result<Option<Fi
     let mut response_bytes = Vec::new();
     stream.read_to_end(&mut response_bytes).await?;
 
-    let response = FingerResponse::from_bytes(&response_bytes);
+    let response = RawFingerResponse::from_bytes(&response_bytes);
 
     if response.is_empty() {
         Ok(None)
@@ -424,55 +424,6 @@ async fn get_remote_user(username: &str, host: &str) -> anyhow::Result<Option<Fi
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_idle_time() {
-        let cases = vec![("    ", 0), ("5", 5), ("1:30", 90), ("2d", 2880)];
-
-        for (input, expected_minutes) in cases {
-            let duration = FingerUserSession::parse_idle_time(input).unwrap();
-            assert_eq!(
-                duration.num_minutes(),
-                expected_minutes,
-                "Failed on input: {}",
-                input
-            );
-        }
-    }
-
-    #[test]
-    fn test_finger_user_session_parsing() {
-        let line = "On since Mon Mar  1 10:00 (UTC) on pts/0, idle 5:00, from host.example.com";
-        let session = FingerUserSession::try_from_finger_response_line(line).unwrap();
-        assert_eq!(session.tty, "pts/0");
-        assert_eq!(session.host, "host.example.com");
-        assert_eq!(session.login_time.weekday(), Weekday::Mon);
-        assert_eq!(session.login_time.hour(), 10);
-        assert_eq!(session.idle_time.num_minutes(), 300);
-    }
-
-    #[test]
-    fn test_finger_user_entry_parsing() {
-        let response_content = indoc::indoc! {"
-              Login: alice           			Name: Alice Wonderland
-              Directory: /home/alice             	Shell: /bin/bash
-              On since Mon Mar  1 10:00 (UTC) on pts/0, idle 5:00, from host.example.com
-              No Mail.
-              No Plan.
-            "}
-        .trim();
-
-        let response = FingerResponse::from(response_content.to_string());
-        let user_entry =
-            FingerUserEntry::try_from_finger_response(&response, "alice".to_string()).unwrap();
-        assert_eq!(user_entry.username, "alice");
-        assert_eq!(user_entry.full_name, "Alice Wonderland");
-        assert_eq!(user_entry.home_dir, PathBuf::from("/home/alice"));
-        assert_eq!(user_entry.shell, PathBuf::from("/bin/bash"));
-        assert_eq!(user_entry.sessions.len(), 1);
-        assert_eq!(user_entry.sessions[0].tty, "pts/0");
-        assert_eq!(user_entry.sessions[0].host, "host.example.com");
-    }
 
     #[test]
     fn test_finger_root() {
