@@ -1,10 +1,36 @@
-use std::{net::hostname, path::Path};
+use std::{
+    net::hostname,
+    os::unix::fs::{MetadataExt, PermissionsExt},
+    path::Path,
+};
 
 use chrono::{DateTime, Duration, Timelike, Utc};
 use nix::sys::stat::stat;
 use uucore::utmpx::Utmpx;
 
 use crate::proto::finger_protocol::{FingerResponseUserEntry, FingerResponseUserSession};
+
+fn read_file_content_if_exists(path: &Path) -> anyhow::Result<Option<String>> {
+    let file_is_readable = path.exists()
+        && path.is_file()
+        && (((path.metadata()?.permissions().mode() & 0o400 != 0
+            && nix::unistd::geteuid().as_raw() == path.metadata()?.uid())
+            || (path.metadata()?.permissions().mode() & 0o040 != 0
+                && nix::unistd::getegid().as_raw() == path.metadata()?.gid())
+            || (path.metadata()?.permissions().mode() & 0o004 != 0))
+            || caps::has_cap(
+                None,
+                caps::CapSet::Effective,
+                caps::Capability::CAP_DAC_READ_SEARCH,
+            )?)
+        && path.metadata()?.len() > 0;
+
+    if file_is_readable {
+        Ok(Some(std::fs::read_to_string(path)?.trim().to_string()))
+    } else {
+        Ok(None)
+    }
+}
 
 /// Retrieve local user information for the given username.
 ///
@@ -32,12 +58,24 @@ pub fn get_local_user(username: &str) -> anyhow::Result<Option<FingerResponseUse
     let home_dir = user_entry.dir.clone();
     let shell = user_entry.shell;
 
+    let gecos_fields: Vec<&str> = full_name.split(',').collect();
+
+    let office = gecos_fields.get(1).map(|s| s.to_string());
+    let office_phone = gecos_fields.get(2).map(|s| s.to_string());
+    let home_phone = gecos_fields.get(3).map(|s| s.to_string());
+
     let hostname = hostname()?.to_str().unwrap_or("localhost").to_string();
 
-    let now = Utc::now().with_nanosecond(0).unwrap_or(Utc::now());
-    let sessions: Vec<FingerResponseUserSession> = Utmpx::iter_all_records()
+    let mut utmpx_records = Utmpx::iter_all_records()
         .filter(|entry| entry.user() == username)
         .filter(|entry| entry.is_user_process())
+        .peekable();
+
+    // TODO: Don't use utmp entries for this, read from lastlog instead
+    let user_never_logged_in = utmpx_records.peek().is_none();
+
+    let now = Utc::now().with_nanosecond(0).unwrap_or(Utc::now());
+    let sessions: Vec<FingerResponseUserSession> = utmpx_records
         .filter_map(|entry| {
             let login_time = entry
                 .login_time()
@@ -74,23 +112,32 @@ pub fn get_local_user(username: &str) -> anyhow::Result<Option<FingerResponseUse
         .collect();
 
     let forward_path = user_entry.dir.join(".forward");
-    let forward =
-        if forward_path.exists() && forward_path.metadata()?.len() > 0 && forward_path.is_file() {
-            Some(std::fs::read_to_string(&forward_path)?.trim().to_string())
-        } else {
-            None
-        };
+    let forward = read_file_content_if_exists(&forward_path)?;
+
+    let pgpkey_path = user_entry.dir.join(".pgpkey");
+    let pgpkey = read_file_content_if_exists(&pgpkey_path)?;
+
+    let project_path = user_entry.dir.join(".project");
+    let project = read_file_content_if_exists(&project_path)?;
 
     let plan_path = user_entry.dir.join(".plan");
-    let plan = if plan_path.exists() && plan_path.metadata()?.len() > 0 && plan_path.is_file() {
-        Some(std::fs::read_to_string(&plan_path)?.trim().to_string())
-    } else {
-        None
-    };
+    let plan = read_file_content_if_exists(&plan_path)?;
 
     Ok(Some(FingerResponseUserEntry::new(
-        username, full_name, home_dir, shell, None, None, None, false, sessions, forward, None,
-        None, None, plan,
+        username,
+        full_name,
+        home_dir,
+        shell,
+        office,
+        office_phone,
+        home_phone,
+        user_never_logged_in,
+        sessions,
+        forward,
+        None,
+        pgpkey,
+        project,
+        plan,
     )))
 }
 

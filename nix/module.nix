@@ -112,6 +112,7 @@ in {
           "/etc"
           # NOTE: need logind socket for utmp entries
           "/run/systemd"
+          "/home"
         ];
 
         UMask = "0077";

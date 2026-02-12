@@ -587,13 +587,7 @@ impl FingerResponseUserSession {
 
         let messages_on = !line.ends_with("(messages off)");
 
-        Ok(Self {
-            tty,
-            login_time,
-            idle_time,
-            host,
-            messages_on,
-        })
+        Ok(Self::new(tty, login_time, idle_time, host, messages_on))
     }
 }
 
