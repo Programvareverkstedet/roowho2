@@ -4,9 +4,11 @@
 
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
+
+    crane.url = "github:ipetkov/crane";
   };
 
-  outputs = { self, nixpkgs, rust-overlay}:
+  outputs = { self, nixpkgs, rust-overlay, crane }:
   let
     inherit (nixpkgs) lib;
 
@@ -71,6 +73,9 @@
       roowho2 = final: prev: {
         inherit (self.packages.${prev.stdenv.hostPlatform.system}) roowho2;
       };
+      roowho2-crane = final: prev: {
+        roowho2 = self.packages.${prev.stdenv.hostPlatform.system}.roowho2-crane;
+      };
     };
 
     nixosModules.default = ./nix/module.nix;
@@ -79,12 +84,13 @@
       let
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
       cargoLock = ./Cargo.lock;
+      craneLib = (crane.mkLib pkgs).overrideToolchain(p: p.rust-bin.nightly.latest.default);
+
       src = lib.fileset.toSource {
         root = ./.;
         fileset = lib.fileset.unions [
-          ./src
-          ./Cargo.toml
-          ./Cargo.lock
+          (craneLib.fileset.commonCargoSources ./.)
+          # ./assets
         ];
       };
 
@@ -93,13 +99,25 @@
         cargo = pkgs.rust-bin.nightly.latest.cargo;
       };
     in {
-      default = self.packages.${system}.roowho2;
+      default = self.packages.${system}.roowho2-crane;
 
-      roowho2 = pkgs.callPackage ./nix/package.nix { inherit cargoToml cargoLock src rustPlatform; };
+      roowho2 = pkgs.callPackage ./nix/package.nix {
+        inherit cargoToml cargoLock src rustPlatform;
+      };
+
+      roowho2-crane = pkgs.callPackage ./nix/package.nix {
+        useCrane = true;
+        inherit cargoToml cargoLock src craneLib;
+      };
 
       filteredSource = pkgs.runCommandLocal "filtered-source" { } ''
         ln -s ${src} $out
       '';
+    });
+
+    checks = forAllSystems (system: pkgs: _: {
+      # NOTE: the non-crane build runs tests during checkPhase
+      inherit (self.packages.${system}) roowho2;
     });
   };
 }

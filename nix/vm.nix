@@ -4,7 +4,7 @@ let
   pkgs = import nixpkgs {
     inherit system;
     overlays = [
-      self.overlays.default
+      self.overlays.roowho2-crane
     ];
   };
 in
