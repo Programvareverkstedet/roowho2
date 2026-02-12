@@ -23,6 +23,11 @@ pub fn get_local_user(username: &str) -> anyhow::Result<Option<FingerResponseUse
         }
     };
 
+    let nofinger_path = user_entry.dir.join(".nofinger");
+    if nofinger_path.exists() {
+        return Ok(None);
+    }
+
     let full_name = user_entry.name;
     let home_dir = user_entry.dir.clone();
     let shell = user_entry.shell;
