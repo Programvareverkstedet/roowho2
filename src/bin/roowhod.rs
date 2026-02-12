@@ -8,6 +8,7 @@ use std::{
 use anyhow::Context;
 use clap::Parser;
 use tokio::{net::UdpSocket, sync::RwLock};
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use roowho2_lib::server::{
@@ -64,6 +65,16 @@ async fn main() -> anyhow::Result<()> {
 
     let whod_status_store = Arc::new(RwLock::new(HashMap::new()));
 
+    let client_server_token = CancellationToken::new();
+    let client_server_token_ = client_server_token.clone();
+    tokio::spawn(async move {
+        client_server_token_.cancelled().await;
+        tracing::info!("RWHOD client-server is now accepting connections");
+        #[cfg(feature = "systemd")]
+        sd_notify::notify(true, &[sd_notify::NotifyState::Ready]).ok();
+        Ok::<(), anyhow::Error>(())
+    });
+
     if config.rwhod.enable {
         tracing::info!("Starting RWHOD server");
 
@@ -89,6 +100,7 @@ async fn main() -> anyhow::Result<()> {
             .try_clone()
             .context("Failed to clone RWHOD client-server socket fd")?,
         whod_status_store.clone(),
+        client_server_token,
     ));
 
     join_set.spawn(ctrl_c_handler());
@@ -126,6 +138,7 @@ async fn rwhod_server(
 async fn client_server(
     socket_fd: OwnedFd,
     whod_status_store: RwhodStatusStore,
+    startup_token: CancellationToken,
 ) -> anyhow::Result<()> {
     // SAFETY: see above
     let std_socket =
@@ -133,6 +146,8 @@ async fn client_server(
     std_socket.set_nonblocking(true)?;
     let zlink_listener = zlink::unix::Listener::try_from(OwnedFd::from(std_socket))?;
     let client_server_task = varlink_client_server_task(zlink_listener, whod_status_store);
+
+    startup_token.cancel();
 
     client_server_task.await?;
 

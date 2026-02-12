@@ -34,6 +34,7 @@ uucore = { version = "0.5.0", features = ["utmpx"] }
 zlink = { version = "0.3.0", features = ["introspection"] }
 clap_complete = "4.5.65"
 itertools = "0.14.0"
+tokio-util = "0.7.18"
 
 [features]
 default = ["systemd"]
