@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use zlink::{ReplyError, service::MethodReply};
 
 use crate::{
-    proto::{WhodStatusUpdate, WhodUserEntry},
+    proto::{WhodStatusUpdate, WhodUserEntry, finger_protocol::FingerResponseUserEntry},
     server::{
-        fingerd::{self, FingerUserEntry},
+        fingerd::{self},
         rwhod::RwhodStatusStore,
     },
 };
@@ -76,7 +76,7 @@ pub enum VarlinkFingerClientResponse {
     Finger(VarlinkFingerResponse),
 }
 
-pub type VarlinkFingerResponse = Vec<Option<FingerUserEntry>>;
+pub type VarlinkFingerResponse = Vec<Option<FingerResponseUserEntry>>;
 
 #[derive(Debug, Clone, PartialEq, ReplyError)]
 #[zlink(interface = "no.ntnu.pvv.roowho2.finger")]
