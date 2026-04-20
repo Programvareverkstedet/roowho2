@@ -1,3 +1,5 @@
+use std::os::fd::OwnedFd;
+
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use zlink::{ReplyError, service::MethodReply};
@@ -153,37 +155,44 @@ impl VarlinkRoowhoo2ClientServer {
     }
 }
 
-impl zlink::Service for VarlinkRoowhoo2ClientServer {
+impl zlink::Service<zlink::unix::Stream> for VarlinkRoowhoo2ClientServer {
     type MethodCall<'de> = VarlinkMethod;
     type ReplyParams<'se> = VarlinkReply;
     type ReplyStreamParams = ();
-    type ReplyStream = futures_util::stream::Empty<zlink::Reply<()>>;
+    type ReplyStream = futures_util::stream::Empty<(zlink::Reply<()>, Vec<OwnedFd>)>;
     type ReplyError<'se> = VarlinkReplyError;
 
-    async fn handle<'service, Sock: zlink::connection::Socket>(
+    async fn handle<'service>(
         &'service mut self,
         call: &'service zlink::Call<Self::MethodCall<'_>>,
-        _conn: &mut zlink::Connection<Sock>,
-    ) -> MethodReply<Self::ReplyParams<'service>, Self::ReplyStream, Self::ReplyError<'service>>
-    {
+        _conn: &mut zlink::Connection<zlink::unix::Stream>,
+        _fds: Vec<std::os::fd::OwnedFd>,
+    ) -> zlink::service::HandleResult<
+        Self::ReplyParams<'service>,
+        Self::ReplyStream,
+        Self::ReplyError<'service>,
+    > {
         match call.method() {
-            VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Rwho { all }) => {
+            VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Rwho { all }) => (
                 MethodReply::Single(Some(VarlinkReply::Rwhod(VarlinkRwhodClientResponse::Rwho(
                     self.handle_rwho_request(*all).await,
-                ))))
-            }
-            VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Ruptime) => {
+                )))),
+                Default::default(),
+            ),
+            VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Ruptime) => (
                 MethodReply::Single(Some(VarlinkReply::Rwhod(
                     VarlinkRwhodClientResponse::Ruptime(self.handle_ruptime_request().await),
-                )))
-            }
-            VarlinkMethod::Finger(VarlinkFingerClientRequest::Finger { user_queries }) => {
+                ))),
+                Default::default(),
+            ),
+            VarlinkMethod::Finger(VarlinkFingerClientRequest::Finger { user_queries }) => (
                 MethodReply::Single(Some(VarlinkReply::Finger(
                     VarlinkFingerClientResponse::Finger(
                         self.handle_finger_request(user_queries.clone()).await,
                     ),
-                )))
-            }
+                ))),
+                Default::default(),
+            ),
         }
     }
 }

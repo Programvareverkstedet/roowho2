@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     )?;
 
     let fd_map: HashMap<String, OwnedFd> = HashMap::from_iter(
-        sd_notify::listen_fds_with_names(false)?.map(|(fd_num, name)| {
+        sd_notify::listen_fds_with_names()?.map(|(fd_num, name)| {
             (
                 name.clone(),
                 // SAFETY: please don't mess around with file descriptors in random places
@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
         client_server_token_.cancelled().await;
         tracing::info!("RWHOD client-server is now accepting connections");
         #[cfg(feature = "systemd")]
-        sd_notify::notify(true, &[sd_notify::NotifyState::Ready]).ok();
+        sd_notify::notify(&[sd_notify::NotifyState::Ready]).ok();
         Ok::<(), anyhow::Error>(())
     });
 
