@@ -1,5 +1,5 @@
 use anyhow::Context;
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, Parser, builder::ArgPredicate};
 use clap_complete::{Shell, generate};
 use roowho2_lib::server::varlink_api::VarlinkFingerClientProxy;
 
@@ -92,7 +92,15 @@ pub struct Args {
     /// Mail status is shown as ``No Mail.'' if there is no mail at all,
     /// ``Mail last read DDD MMM ## HH:MM YYYY (TZ)'' if the person has looked at their mailbox since new mail arriving,
     /// or ``New mail received ...'', ``Unread since ...'' if they have new mail.
-    #[arg(long, short, conflicts_with = "short")]
+    #[arg(
+      long,
+      short,
+      conflicts_with = "short",
+      default_value_ifs([
+        ("short", ArgPredicate::IsPresent, "false"),
+        ("users", ArgPredicate::IsPresent, "true"),
+      ]),
+    )]
     long: bool,
 
     /// Prevent the -l option of finger from displaying the contents of
@@ -121,6 +129,11 @@ pub struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    debug_assert_ne!(
+        args.short, args.long,
+        "Short and long output formats cannot both be enabled or both be disabled at the same time"
+    );
 
     if let Some(shell) = args.completions {
         generate(shell, &mut Args::command(), "rwho", &mut std::io::stdout());
