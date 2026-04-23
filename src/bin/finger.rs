@@ -123,7 +123,7 @@ pub struct Args {
     #[arg(long, value_enum, hide = true)]
     completions: Option<Shell>,
 
-    users: Vec<String>,
+    users: Option<Vec<String>>,
 }
 
 #[tokio::main]
@@ -154,7 +154,7 @@ async fn main() -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(&reply).unwrap());
     } else {
         for user in reply {
-            println!("{:#?}", user.unwrap());
+            println!("{:#?}", user);
         }
     }
 

@@ -6,10 +6,58 @@ use std::{
 
 use chrono::{DateTime, Duration, Timelike, Utc};
 use nix::sys::stat::stat;
+use users::all_users;
 use uucore::utmpx::Utmpx;
 
 use crate::proto::finger_protocol::{FingerResponseUserEntry, FingerResponseUserSession};
 
+/// Search for users whose username or full name contains the search string.
+pub fn search_for_user(
+    search_string: &str,
+    dont_search_fullnames: bool,
+) -> Vec<anyhow::Result<FingerResponseUserEntry>> {
+    (unsafe { all_users() })
+        .filter_map(|user| {
+            let user = match nix::unistd::User::from_uid(user.uid().into()) {
+                Ok(Some(user)) => user,
+                Ok(None) => return None, // User disappeared, skip
+                Err(e) => {
+                    return Some(Err(anyhow::anyhow!(
+                        "Failed to get user entry for UID {}: {}",
+                        user.uid(),
+                        e
+                    )));
+                }
+            };
+
+            let username = user.name;
+            let full_name = String::from_utf8_lossy(
+                &user
+                    .gecos
+                    .as_bytes()
+                    .split(|&b| b == b',')
+                    .next()
+                    .unwrap_or(&[]),
+            )
+            .to_string();
+
+            let matches_username = username.contains(search_string);
+            let matches_fullname = !dont_search_fullnames && full_name.contains(search_string);
+            if matches_username || matches_fullname {
+                match get_local_user(&username) {
+                    Ok(Some(user_entry)) => Some(Ok(user_entry)),
+                    Ok(None) => None, // User exists but has .nofinger, skip
+                    Err(err) => Some(Err(err.into())),
+                }
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Helper function to read the content of a file if it exists and is readable,
+/// returning None if the file does not exist or is not readable.
 fn read_file_content_if_exists(path: &Path) -> anyhow::Result<Option<String>> {
     let file_is_readable = path.exists()
         && path.is_file()
@@ -35,7 +83,7 @@ fn read_file_content_if_exists(path: &Path) -> anyhow::Result<Option<String>> {
 /// Retrieve local user information for the given username.
 ///
 /// Returns None if the user does not exist.
-pub fn get_local_user(username: &str) -> anyhow::Result<Option<FingerResponseUserEntry>> {
+fn get_local_user(username: &str) -> anyhow::Result<Option<FingerResponseUserEntry>> {
     let username = username.to_string();
     let user_entry = match nix::unistd::User::from_name(&username) {
         Ok(Some(user)) => user,

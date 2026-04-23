@@ -61,7 +61,7 @@ pub enum VarlinkRwhodClientError {
 pub trait VarlinkFingerClientProxy {
     async fn finger(
         &mut self,
-        user_queries: Vec<String>,
+        user_queries: Option<Vec<String>>,
     ) -> zlink::Result<Result<VarlinkFingerResponse, VarlinkFingerClientError>>;
 }
 
@@ -69,7 +69,7 @@ pub trait VarlinkFingerClientProxy {
 #[serde(tag = "method", content = "parameters")]
 pub enum VarlinkFingerClientRequest {
     #[serde(rename = "no.ntnu.pvv.roowho2.finger.Finger")]
-    Finger { user_queries: Vec<String> },
+    Finger { user_queries: Option<Vec<String>> },
 }
 
 #[derive(Debug, Serialize)]
@@ -78,7 +78,7 @@ pub enum VarlinkFingerClientResponse {
     Finger(VarlinkFingerResponse),
 }
 
-pub type VarlinkFingerResponse = Vec<Option<FingerResponseUserEntry>>;
+pub type VarlinkFingerResponse = Vec<FingerResponseUserEntry>;
 
 #[derive(Debug, Clone, PartialEq, ReplyError)]
 #[zlink(interface = "no.ntnu.pvv.roowho2.finger")]
@@ -147,11 +147,37 @@ impl VarlinkRoowhoo2ClientServer {
         store.values().cloned().collect()
     }
 
-    async fn handle_finger_request(&self, user_queries: Vec<String>) -> VarlinkFingerResponse {
-        user_queries
-            .into_iter()
-            .map(|username| fingerd::get_local_user(&username).unwrap())
-            .collect()
+    async fn handle_finger_request(
+        &self,
+        user_queries: Option<Vec<String>>,
+    ) -> VarlinkFingerResponse {
+        match user_queries {
+            // TODO: deduplicate results
+            Some(usernames) => usernames
+                .into_iter()
+                .flat_map::<Vec<_>, _>(|username| {
+                    fingerd::search_for_user(&username, false)
+                        .into_iter()
+                        .map(|res| (username.clone(), res))
+                        .collect()
+                })
+                .filter_map(|(username, user)| match user {
+                    Ok(user_info) => Some(user_info),
+                    Err(err) => {
+                        tracing::error!(
+                            "Error retrieving local user information for '{}': {}",
+                            username,
+                            err
+                        );
+                        None
+                    }
+                })
+                .collect(),
+            None => {
+                // TODO: fetch logged in users using utmp entries
+                todo!()
+            }
+        }
     }
 }
 
