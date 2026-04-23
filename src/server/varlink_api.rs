@@ -137,6 +137,7 @@ impl VarlinkRoowhoo2ClientServer {
 impl VarlinkRoowhoo2ClientServer {
     // TODO: handle 'all' parameter
     async fn handle_rwho_request(&self, _all: bool) -> VarlinkRwhoResponse {
+        tracing::debug!(all = _all, "Handling Rwho request");
         let store = self.whod_status_store.read().await;
 
         let mut all_user_entries = Vec::with_capacity(store.len());
@@ -154,6 +155,7 @@ impl VarlinkRoowhoo2ClientServer {
     }
 
     async fn handle_ruptime_request(&self) -> VarlinkRuptimeResponse {
+        tracing::debug!("Handling Ruptime request");
         let store = self.whod_status_store.read().await;
         store.values().cloned().collect()
     }
@@ -166,6 +168,12 @@ impl VarlinkRoowhoo2ClientServer {
         _request_networking: FingerRequestNetworking,
         _disable_user_account_db: bool,
     ) -> VarlinkFingerResponse {
+        tracing::debug!(
+          user_queries = ?user_queries,
+          match_fullnames = match_fullnames,
+          request_info = ?request_info,
+          "Handling Finger request",
+        );
         match user_queries {
             Some(usernames) => usernames
                 .into_iter()
