@@ -7,7 +7,7 @@ use zlink::{ReplyError, service::MethodReply};
 use crate::{
     proto::{WhodStatusUpdate, WhodUserEntry, finger_protocol::FingerResponseUserEntry},
     server::{
-        fingerd::{self},
+        fingerd::{self, FingerRequestInfo, FingerRequestNetworking},
         rwhod::RwhodStatusStore,
     },
 };
@@ -62,6 +62,10 @@ pub trait VarlinkFingerClientProxy {
     async fn finger(
         &mut self,
         user_queries: Option<Vec<String>>,
+        match_fullnames: bool,
+        request_info: FingerRequestInfo,
+        request_networking: FingerRequestNetworking,
+        disable_user_account_db: bool,
     ) -> zlink::Result<Result<VarlinkFingerResponse, VarlinkFingerClientError>>;
 }
 
@@ -69,7 +73,13 @@ pub trait VarlinkFingerClientProxy {
 #[serde(tag = "method", content = "parameters")]
 pub enum VarlinkFingerClientRequest {
     #[serde(rename = "no.ntnu.pvv.roowho2.finger.Finger")]
-    Finger { user_queries: Option<Vec<String>> },
+    Finger {
+        user_queries: Option<Vec<String>>,
+        match_fullnames: bool,
+        request_info: FingerRequestInfo,
+        request_networking: FingerRequestNetworking,
+        disable_user_account_db: bool,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -150,13 +160,17 @@ impl VarlinkRoowhoo2ClientServer {
     async fn handle_finger_request(
         &self,
         user_queries: Option<Vec<String>>,
+        match_fullnames: bool,
+        request_info: FingerRequestInfo,
+        _request_networking: FingerRequestNetworking,
+        _disable_user_account_db: bool,
     ) -> VarlinkFingerResponse {
         match user_queries {
             // TODO: deduplicate results
             Some(usernames) => usernames
                 .into_iter()
                 .flat_map::<Vec<_>, _>(|username| {
-                    fingerd::search_for_user(&username, false)
+                    fingerd::search_for_user(&username, match_fullnames, &request_info)
                         .into_iter()
                         .map(|res| (username.clone(), res))
                         .collect()
@@ -211,10 +225,23 @@ impl zlink::Service<zlink::unix::Stream> for VarlinkRoowhoo2ClientServer {
                 ))),
                 Default::default(),
             ),
-            VarlinkMethod::Finger(VarlinkFingerClientRequest::Finger { user_queries }) => (
+            VarlinkMethod::Finger(VarlinkFingerClientRequest::Finger {
+                user_queries,
+                match_fullnames,
+                request_info,
+                request_networking,
+                disable_user_account_db,
+            }) => (
                 MethodReply::Single(Some(VarlinkReply::Finger(
                     VarlinkFingerClientResponse::Finger(
-                        self.handle_finger_request(user_queries.clone()).await,
+                        self.handle_finger_request(
+                            user_queries.clone(),
+                            *match_fullnames,
+                            request_info.clone(),
+                            request_networking.clone(),
+                            *disable_user_account_db,
+                        )
+                        .await,
                     ),
                 ))),
                 Default::default(),

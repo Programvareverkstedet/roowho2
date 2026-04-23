@@ -6,15 +6,37 @@ use std::{
 
 use chrono::{DateTime, Duration, Timelike, Utc};
 use nix::sys::stat::stat;
+use serde::{Deserialize, Serialize};
 use users::all_users;
 use uucore::utmpx::Utmpx;
 
 use crate::proto::finger_protocol::{FingerResponseUserEntry, FingerResponseUserSession};
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum FingerRequestNetworking {
+  Any,
+  IPv4Only,
+  IPv6Only,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum FingerRequestInfo {
+    ShortHost {
+        restrict_gecos: bool,
+    },
+    ShortOffice {
+        restrict_gecos: bool,
+    },
+    Long {
+        prevent_files: bool,
+    },
+}
+
 /// Search for users whose username or full name contains the search string.
 pub fn search_for_user(
     search_string: &str,
-    dont_search_fullnames: bool,
+    match_fullnames: bool,
+    _request_info: &FingerRequestInfo,
 ) -> Vec<anyhow::Result<FingerResponseUserEntry>> {
     (unsafe { all_users() })
         .filter_map(|user| {
@@ -42,7 +64,7 @@ pub fn search_for_user(
             .to_string();
 
             let matches_username = username.contains(search_string);
-            let matches_fullname = !dont_search_fullnames && full_name.contains(search_string);
+            let matches_fullname = match_fullnames && full_name.contains(search_string);
             if matches_username || matches_fullname {
                 match get_local_user(&username) {
                     Ok(Some(user_entry)) => Some(Ok(user_entry)),

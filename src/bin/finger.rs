@@ -1,7 +1,10 @@
 use anyhow::Context;
 use clap::{CommandFactory, Parser, builder::ArgPredicate};
 use clap_complete::{Shell, generate};
-use roowho2_lib::server::varlink_api::VarlinkFingerClientProxy;
+use roowho2_lib::server::{
+    fingerd::{FingerRequestInfo, FingerRequestNetworking},
+    varlink_api::VarlinkFingerClientProxy,
+};
 
 /// User information lookup program
 ///
@@ -122,6 +125,32 @@ pub struct Args {
     users: Option<Vec<String>>,
 }
 
+fn determine_request_info(args: &Args) -> FingerRequestInfo {
+    if args.long {
+        FingerRequestInfo::Long {
+            prevent_files: args.prevent_files,
+        }
+    } else {
+        debug_assert!(
+            args.short,
+            "Either short or long output format must be selected"
+        );
+        debug_assert!(
+            !args.host || !args.office,
+            "Host and office options cannot both be enabled for short output format"
+        );
+        if args.host {
+            FingerRequestInfo::ShortHost {
+                restrict_gecos: args.gecos,
+            }
+        } else {
+            FingerRequestInfo::ShortOffice {
+                restrict_gecos: args.gecos,
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -140,8 +169,21 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("Failed to connect to fingerd server");
 
+    let request_info = determine_request_info(&args);
+    let request_networking = match (args.ipv4, args.ipv6) {
+        (true, false) => FingerRequestNetworking::IPv4Only,
+        (false, true) => FingerRequestNetworking::IPv6Only,
+        _ => FingerRequestNetworking::Any,
+    };
+
     let reply = conn
-        .finger(args.users)
+        .finger(
+            args.users,
+            !args.no_name_match,
+            request_info,
+            request_networking,
+            args.no_acct,
+        )
         .await
         .context("Failed to send finger request")?
         .map_err(|e| anyhow::anyhow!("Server returned an error for finger request: {:?}", e))?;
