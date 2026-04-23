@@ -1,6 +1,7 @@
 use std::os::fd::OwnedFd;
 
 use anyhow::Context;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use zlink::{ReplyError, service::MethodReply};
 
@@ -166,7 +167,6 @@ impl VarlinkRoowhoo2ClientServer {
         _disable_user_account_db: bool,
     ) -> VarlinkFingerResponse {
         match user_queries {
-            // TODO: deduplicate results
             Some(usernames) => usernames
                 .into_iter()
                 .flat_map::<Vec<_>, _>(|username| {
@@ -174,6 +174,10 @@ impl VarlinkRoowhoo2ClientServer {
                         .into_iter()
                         .map(|res| (username.clone(), res))
                         .collect()
+                })
+                .dedup_by(|a, b| match (&a.1, &b.1) {
+                    (Ok(user_a), Ok(user_b)) => user_a.username == user_b.username,
+                    _ => false,
                 })
                 .filter_map(|(username, user)| match user {
                     Ok(user_info) => Some(user_info),
