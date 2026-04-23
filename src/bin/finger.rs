@@ -58,12 +58,20 @@ pub struct Args {
 
     /// When used in conjunction with the -s option, the office location and
     /// office phone information is displayed instead of the name of the remote host.
-    #[arg(long, short, requires = "short", conflicts_with = "host")]
+    // TODO: this is default true, should be false when host is true
+    #[arg(
+        long,
+        short,
+        requires = "short",
+        conflicts_with = "host",
+        default_value = "true",
+        default_value_if("host", ArgPredicate::IsPresent, "false")
+    )]
     office: bool,
 
     /// This option restricts the gecos output to only the users' real name.
     /// It also has the side-effect of restricting the output of the remote host
-    /// when used in conjunction with the -h option.
+    /// when used in conjunction with the -H option.
     #[arg(long, short, requires = "short")]
     gecos: bool,
 
@@ -91,15 +99,7 @@ pub struct Args {
     /// Mail status is shown as ``No Mail.'' if there is no mail at all,
     /// ``Mail last read DDD MMM ## HH:MM YYYY (TZ)'' if the person has looked at their mailbox since new mail arriving,
     /// or ``New mail received ...'', ``Unread since ...'' if they have new mail.
-    #[arg(
-      long,
-      short,
-      conflicts_with = "short",
-      default_value_ifs([
-        ("short", ArgPredicate::IsPresent, "false"),
-        ("users", ArgPredicate::IsPresent, "true"),
-      ]),
-    )]
+    #[arg(long, short, conflicts_with = "short")]
     long: bool,
 
     /// Prevent the -l option of finger from displaying the contents of
@@ -126,15 +126,19 @@ pub struct Args {
 }
 
 fn determine_request_info(args: &Args) -> FingerRequestInfo {
-    if args.long {
+    let is_long = if args.long {
+        true
+    } else if args.short {
+        false
+    } else {
+        args.users.is_some()
+    };
+
+    if is_long {
         FingerRequestInfo::Long {
             prevent_files: args.prevent_files,
         }
     } else {
-        debug_assert!(
-            args.short,
-            "Either short or long output format must be selected"
-        );
         debug_assert!(
             !args.host || !args.office,
             "Host and office options cannot both be enabled for short output format"
@@ -154,11 +158,6 @@ fn determine_request_info(args: &Args) -> FingerRequestInfo {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-
-    debug_assert_ne!(
-        args.short, args.long,
-        "Short and long output formats cannot both be enabled or both be disabled at the same time"
-    );
 
     if let Some(shell) = args.completions {
         generate(shell, &mut Args::command(), "rwho", &mut std::io::stdout());
