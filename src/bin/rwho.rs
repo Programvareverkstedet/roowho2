@@ -13,11 +13,7 @@ use roowho2_lib::{proto::WhodUserEntry, server::varlink_api::VarlinkRwhodClientP
 /// If a user hasn't typed to the system for an hour or more,
 /// then the user will be omitted from the output of `rwho` unless the `-a` flag is given.
 #[derive(Debug, Parser)]
-#[command(
-    author = "Programvareverkstedet <projects@pvv.ntnu.no>",
-    about,
-    version
-)]
+#[command(author = "Programvareverkstedet <projects@pvv.ntnu.no>", version)]
 pub struct Args {
     /// Print all machines responding even if no one is currently logged in
     #[arg(long, short)]

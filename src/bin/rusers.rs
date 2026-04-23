@@ -8,11 +8,7 @@ use clap::Parser;
 /// the host-name with the names of the users currently logged on is printed on each line.
 /// The `rusers` command will wait for one minute to catch late responders.
 #[derive(Debug, Parser)]
-#[command(
-    author = "Programvareverkstedet <projects@pvv.ntnu.no>",
-    about,
-    version,
-)]
+#[command(author = "Programvareverkstedet <projects@pvv.ntnu.no>", version)]
 pub struct Args {
     /// Print all machines responding even if no one is currently logged in
     #[arg(long, short)]

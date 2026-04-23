@@ -12,11 +12,7 @@ use roowho2_lib::{proto::WhodStatusUpdate, server::varlink_api::VarlinkRwhodClie
 ///
 /// Machines for which no status report has been received for 11 minutes are shown as being down.
 #[derive(Debug, Parser)]
-#[command(
-    author = "Programvareverkstedet <projects@pvv.ntnu.no>",
-    about,
-    version
-)]
+#[command(author = "Programvareverkstedet <projects@pvv.ntnu.no>", version)]
 pub struct Args {
     /// Users idle an hour or more are not counted unless the `-a` flag is given.
     #[arg(long, short)]
