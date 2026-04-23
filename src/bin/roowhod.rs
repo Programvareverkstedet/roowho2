@@ -50,16 +50,15 @@ async fn main() -> anyhow::Result<()> {
         ))?,
     )?;
 
-    let fd_map: HashMap<String, OwnedFd> = HashMap::from_iter(
-        sd_notify::listen_fds_with_names()?.map(|(fd_num, name)| {
+    let fd_map: HashMap<String, OwnedFd> =
+        HashMap::from_iter(sd_notify::listen_fds_with_names()?.map(|(fd_num, name)| {
             (
                 name.clone(),
                 // SAFETY: please don't mess around with file descriptors in random places
                 //         around the codebase lol
                 unsafe { std::os::fd::OwnedFd::from_raw_fd(fd_num) },
             )
-        }),
-    );
+        }));
 
     let mut join_set = tokio::task::JoinSet::new();
 

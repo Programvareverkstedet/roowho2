@@ -14,22 +14,16 @@ use crate::proto::finger_protocol::{FingerResponseUserEntry, FingerResponseUserS
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FingerRequestNetworking {
-  Any,
-  IPv4Only,
-  IPv6Only,
+    Any,
+    IPv4Only,
+    IPv6Only,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FingerRequestInfo {
-    ShortHost {
-        restrict_gecos: bool,
-    },
-    ShortOffice {
-        restrict_gecos: bool,
-    },
-    Long {
-        prevent_files: bool,
-    },
+    ShortHost { restrict_gecos: bool },
+    ShortOffice { restrict_gecos: bool },
+    Long { prevent_files: bool },
 }
 
 /// Search for users whose username or full name contains the search string.
@@ -54,8 +48,7 @@ pub fn search_for_user(
 
             let username = user.name;
             let full_name = String::from_utf8_lossy(
-                &user
-                    .gecos
+                user.gecos
                     .as_bytes()
                     .split(|&b| b == b',')
                     .next()
@@ -69,7 +62,7 @@ pub fn search_for_user(
                 match get_local_user(&username) {
                     Ok(Some(user_entry)) => Some(Ok(user_entry)),
                     Ok(None) => None, // User exists but has .nofinger, skip
-                    Err(err) => Some(Err(err.into())),
+                    Err(err) => Some(Err(err)),
                 }
             } else {
                 None
