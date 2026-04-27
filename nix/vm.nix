@@ -48,6 +48,7 @@ nixpkgs.lib.nixosSystem {
 
       services.roowho2 = {
         enable = true;
+        logLevel = "debug";
       };
 
       programs.vim = {
