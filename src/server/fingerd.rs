@@ -5,6 +5,7 @@ use std::{
 };
 
 use chrono::{DateTime, Duration, Timelike, Utc};
+use itertools::Itertools;
 use nix::sys::stat::stat;
 use serde::{Deserialize, Serialize};
 use users::all_users;
@@ -68,6 +69,18 @@ pub fn search_for_user(
                 None
             }
         })
+        .collect()
+}
+
+/// Retrieve information about all users currently logged in, based on utmpx records.
+pub fn finger_utmp_users(
+    _request_info: &FingerRequestInfo,
+) -> Vec<anyhow::Result<FingerResponseUserEntry>> {
+    Utmpx::iter_all_records()
+        .filter(|entry| entry.is_user_process())
+        .map(|entry| entry.user())
+        .dedup()
+        .flat_map(|username| get_local_user(&username).transpose())
         .collect()
 }
 

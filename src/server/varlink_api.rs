@@ -8,7 +8,7 @@ use zlink::{ReplyError, service::MethodReply};
 use crate::{
     proto::{WhodStatusUpdate, WhodUserEntry, finger_protocol::FingerResponseUserEntry},
     server::{
-        fingerd::{self, FingerRequestInfo, FingerRequestNetworking},
+        fingerd::{self, FingerRequestInfo, FingerRequestNetworking, finger_utmp_users},
         rwhod::RwhodStatusStore,
     },
 };
@@ -199,10 +199,16 @@ impl VarlinkRoowhoo2ClientServer {
                     }
                 })
                 .collect(),
-            None => {
-                // TODO: fetch logged in users using utmp entries
-                todo!()
-            }
+            None => finger_utmp_users(&request_info)
+                .into_iter()
+                .filter_map(|res| match res {
+                    Ok(user_info) => Some(user_info),
+                    Err(err) => {
+                        tracing::error!("Error retrieving local user information: {}", err);
+                        None
+                    }
+                })
+                .collect(),
         }
     }
 }
