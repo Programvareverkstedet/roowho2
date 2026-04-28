@@ -204,6 +204,8 @@ impl VarlinkRoowhoo2ClientServer {
                         None
                     }
                 })
+                .map(Box::new)
+                .map(FingerResponseUserEntry::Structured)
                 .collect(),
             None => finger_utmp_users(&request_info)
                 .into_iter()
@@ -214,6 +216,8 @@ impl VarlinkRoowhoo2ClientServer {
                         None
                     }
                 })
+                .map(Box::new)
+                .map(FingerResponseUserEntry::Structured)
                 .collect(),
         }
     }

@@ -11,7 +11,7 @@ use users::all_users;
 use uucore::utmpx::{Utmpx, UtmpxRecord};
 
 use crate::{
-    proto::finger_protocol::{FingerResponseUserEntry, FingerResponseUserSession},
+    proto::finger_protocol::{FingerResponseStructuredUserEntry, FingerResponseUserSession},
     server::fingerd::{FingerRequestInfo, local_email},
 };
 
@@ -20,7 +20,7 @@ pub fn search_for_user(
     search_string: &str,
     match_fullnames: bool,
     _request_info: &FingerRequestInfo,
-) -> Vec<anyhow::Result<FingerResponseUserEntry>> {
+) -> Vec<anyhow::Result<FingerResponseStructuredUserEntry>> {
     (unsafe { all_users() })
         .filter_map(|user| {
             let user = match nix::unistd::User::from_uid(user.uid().into()) {
@@ -69,7 +69,7 @@ pub fn search_for_user(
 /// Retrieve information about all users currently logged in, based on utmpx records.
 pub fn finger_utmp_users(
     _request_info: &FingerRequestInfo,
-) -> Vec<anyhow::Result<FingerResponseUserEntry>> {
+) -> Vec<anyhow::Result<FingerResponseStructuredUserEntry>> {
     Utmpx::iter_all_records()
         .filter(|entry| entry.is_user_process())
         .into_group_map_by(|entry| entry.user())
@@ -113,7 +113,7 @@ fn read_file_content_if_exists(path: &Path) -> anyhow::Result<Option<String>> {
 fn get_local_user(
     username: &str,
     utmp_records: Option<Vec<UtmpxRecord>>,
-) -> anyhow::Result<Option<FingerResponseUserEntry>> {
+) -> anyhow::Result<Option<FingerResponseStructuredUserEntry>> {
     tracing::trace!(
         "Retrieving local user information for username: {}",
         username
@@ -211,7 +211,7 @@ fn get_local_user(
     let plan_path = user_entry.dir.join(".plan");
     let plan = read_file_content_if_exists(&plan_path)?;
 
-    Ok(Some(FingerResponseUserEntry::new(
+    Ok(Some(FingerResponseStructuredUserEntry::new(
         username,
         full_name,
         home_dir,

@@ -214,7 +214,13 @@ fn parse_bsd_finger_time(time: &str) -> anyhow::Result<DateTime<Utc>> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FingerResponseUserEntry {
+pub enum FingerResponseUserEntry {
+    Structured(Box<FingerResponseStructuredUserEntry>),
+    Raw(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FingerResponseStructuredUserEntry {
     /// The unix username of this user, as noted in passwd
     pub username: String,
 
@@ -258,7 +264,7 @@ pub struct FingerResponseUserEntry {
     pub plan: Option<String>,
 }
 
-impl FingerResponseUserEntry {
+impl FingerResponseStructuredUserEntry {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         username: String,
@@ -736,9 +742,11 @@ mod tests {
         .trim();
 
         let response = RawFingerResponse::from(response_content.to_string());
-        let user_entry =
-            FingerResponseUserEntry::try_from_raw_finger_response(&response, "alice".to_string())
-                .unwrap();
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "alice".to_string(),
+        )
+        .unwrap();
         assert_eq!(user_entry.username, "alice");
         assert_eq!(user_entry.full_name, "Alice Wonderland");
         assert_eq!(user_entry.home_dir, PathBuf::from("/home/alice"));
@@ -762,9 +770,11 @@ mod tests {
         .trim();
 
         let response = RawFingerResponse::from(response_content.to_string());
-        let user_entry =
-            FingerResponseUserEntry::try_from_raw_finger_response(&response, "alice".to_string())
-                .unwrap();
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "alice".to_string(),
+        )
+        .unwrap();
 
         assert_eq!(user_entry.office, Some("123 Main St".to_string()));
         assert_eq!(user_entry.office_phone, Some("012-345-6789".to_string()));
@@ -786,9 +796,11 @@ mod tests {
         .trim();
 
         let response = RawFingerResponse::from(response_content.to_string());
-        let user_entry =
-            FingerResponseUserEntry::try_from_raw_finger_response(&response, "alice".to_string())
-                .unwrap();
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "alice".to_string(),
+        )
+        .unwrap();
 
         assert_eq!(user_entry.office, Some("123 Main St".to_string()));
         assert_eq!(user_entry.office_phone, Some("012-345-6789".to_string()));
@@ -807,9 +819,11 @@ mod tests {
         .trim();
 
         let response = RawFingerResponse::from(response_content.to_string());
-        let user_entry =
-            FingerResponseUserEntry::try_from_raw_finger_response(&response, "bob".to_string())
-                .unwrap();
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "bob".to_string(),
+        )
+        .unwrap();
 
         assert!(user_entry.never_logged_in);
         assert!(user_entry.sessions.is_empty());
@@ -827,9 +841,11 @@ mod tests {
         .trim();
 
         let response = RawFingerResponse::from(response_content.to_string());
-        let user_entry =
-            FingerResponseUserEntry::try_from_raw_finger_response(&response, "bob".to_string())
-                .unwrap();
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "bob".to_string(),
+        )
+        .unwrap();
         assert_eq!(user_entry.mail_status, Some(MailStatus::NoMail));
     }
 
@@ -846,9 +862,11 @@ mod tests {
         .trim();
 
         let response = RawFingerResponse::from(response_content.to_string());
-        let user_entry =
-            FingerResponseUserEntry::try_from_raw_finger_response(&response, "bob".to_string())
-                .unwrap();
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "bob".to_string(),
+        )
+        .unwrap();
         assert_eq!(
             user_entry.mail_status,
             Some(MailStatus::NewMailReceived {
@@ -870,9 +888,11 @@ mod tests {
         .trim();
 
         let response = RawFingerResponse::from(response_content.to_string());
-        let user_entry =
-            FingerResponseUserEntry::try_from_raw_finger_response(&response, "bob".to_string())
-                .unwrap();
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "bob".to_string(),
+        )
+        .unwrap();
         assert_eq!(
             user_entry.mail_status,
             Some(MailStatus::MailLastRead(
