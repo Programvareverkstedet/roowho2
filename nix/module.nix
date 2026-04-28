@@ -117,9 +117,15 @@ in {
         BindReadOnlyPaths = [
           builtins.storeDir
           "/etc"
+
           # NOTE: need logind socket for utmp entries
           "/run/systemd"
+
           "/home"
+
+          # NOTE: finger might need access to mail directories
+          "-/var/spool"
+          "-/var/mail"
         ];
 
         UMask = "0077";
