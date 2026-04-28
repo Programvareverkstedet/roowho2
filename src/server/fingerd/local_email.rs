@@ -18,14 +18,14 @@ pub fn detect_new_mail_for_user(
     ];
 
     for path in mail_storage_paths {
-        tracing::debug!("Checking for mail at path: {}", path.display());
+        tracing::trace!("Checking for mail at path: {}", path.display());
         if path.is_dir() && path.join("new").is_dir() && path.join("cur").is_dir() {
-            tracing::debug!("Detected maildir structure at path: {}", path.display());
+            tracing::trace!("Detected maildir structure at path: {}", path.display());
             if let Ok(status) = detect_new_mail_by_maildir(&path) {
                 return Ok(Some(status));
             }
         } else if path.is_file() {
-            tracing::debug!("Detected mailbox file at path: {}", path.display());
+            tracing::trace!("Detected mailbox file at path: {}", path.display());
             if let Ok(status) = detect_new_mail_by_mailbox(&path) {
                 return Ok(Some(status));
             }
