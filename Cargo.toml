@@ -37,6 +37,7 @@ itertools = "0.14.0"
 tokio-util = "0.7.18"
 caps = "0.5.6"
 users = { version = "0.11.0", default-features = false }
+tracing-journald = "0.3.2"
 
 [features]
 default = ["systemd"]

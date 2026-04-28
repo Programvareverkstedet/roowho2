@@ -8,6 +8,9 @@ pub const DEFAULT_CLIENT_SOCKET_PATH: &str = "/run/roowho2/server_client.sock";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
+    /// Logging level for the daemon.
+    pub log_level: Option<LogLevel>,
+
     /// Configuration for the rwhod server.
     pub rwhod: RwhodConfig,
 
@@ -15,6 +18,14 @@ pub struct Config {
     ///
     /// If left as `None`, the server expects to be served a file descriptor to the socket named 'client'.
     pub client_socket_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Info,
+    Debug,
+    Trace,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

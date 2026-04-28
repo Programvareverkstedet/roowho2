@@ -9,10 +9,11 @@ use anyhow::Context;
 use clap::Parser;
 use tokio::{net::UdpSocket, sync::RwLock};
 use tokio_util::sync::CancellationToken;
-use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::layer::SubscriberExt;
 
 use roowho2_lib::server::{
-    config::DEFAULT_CONFIG_PATH,
+    config::{DEFAULT_CONFIG_PATH, LogLevel},
     rwhod::{RwhodStatusStore, rwhod_packet_receiver_task, rwhod_packet_sender_task},
     varlink_api::varlink_client_server_task,
 };
@@ -38,17 +39,25 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .init();
-
     let config = toml::from_str::<roowho2_lib::server::config::Config>(
         &std::fs::read_to_string(&args.config_path).context(format!(
             "Failed to read configuration file {:?}",
             args.config_path
         ))?,
     )?;
+
+    let log_filter = match config.log_level.unwrap_or(LogLevel::Info) {
+        LogLevel::Info => LevelFilter::INFO,
+        LogLevel::Debug => LevelFilter::DEBUG,
+        LogLevel::Trace => LevelFilter::TRACE,
+    };
+
+    let subscriber = tracing_subscriber::registry()
+        .with(log_filter)
+        .with(tracing_journald::layer()?);
+
+    tracing::subscriber::set_global_default(subscriber)
+        .context("Failed to set global default tracing subscriber")?;
 
     let fd_map: HashMap<String, OwnedFd> =
         HashMap::from_iter(sd_notify::listen_fds_with_names()?.map(|(fd_num, name)| {

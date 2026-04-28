@@ -11,6 +11,12 @@ in {
       type = lib.types.submodule {
         freeformType = format.type;
         options = {
+          log_level = lib.mkOption {
+            type = lib.types.enum [ "info" "debug" "trace" ];
+            default = "info";
+            description = "Log level for the roowho2 daemon.";
+          };
+
           rwhod = {
             enable = lib.mkEnableOption "the rwhod service" // {
               default = true;
@@ -29,12 +35,6 @@ in {
       };
       default = { };
       description = "Configuration settings for Roowho2.";
-    };
-
-    logLevel = lib.mkOption {
-      type = lib.types.enum [ "quiet" "info" "debug" "trace" ];
-      default = "info";
-      description = "Log level for the roowho2 daemon.";
     };
   };
 
@@ -61,7 +61,6 @@ in {
     };
 
     systemd.services.roowho2 = {
-      environment.RUST_LOG = cfg.logLevel;
       serviceConfig = {
         Type = "notify";
         ExecStart = "${lib.getExe' cfg.package "roowhod"} --config ${format.generate "roowho2-config.toml" cfg.settings}";

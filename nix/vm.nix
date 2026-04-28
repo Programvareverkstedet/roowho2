@@ -48,7 +48,7 @@ nixpkgs.lib.nixosSystem {
 
       services.roowho2 = {
         enable = true;
-        logLevel = "trace";
+        settings.log_level = "trace";
       };
 
       programs.vim = {
