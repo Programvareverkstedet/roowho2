@@ -117,6 +117,13 @@ pub struct Args {
     #[arg(long, short)]
     json: bool,
 
+    /// When fingering remote users, don't try to parse the content before displaying it,
+    /// but instead just print the bytes as they are received from the remote.
+    ///
+    /// Note that this option makes it impossible to represent remote users as JSON.
+    #[arg(long, short, conflicts_with = "json")]
+    raw: bool,
+
     /// Generate shell completion scripts for the specified shell
     /// and print them to stdout.
     #[arg(long, value_enum, hide = true)]
@@ -182,6 +189,7 @@ async fn main() -> anyhow::Result<()> {
             request_info,
             request_networking,
             args.no_acct,
+            args.raw,
         )
         .await
         .context("Failed to send finger request")?

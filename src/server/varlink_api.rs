@@ -69,6 +69,7 @@ pub trait VarlinkFingerClientProxy {
         request_info: FingerRequestInfo,
         request_networking: FingerRequestNetworking,
         disable_user_account_db: bool,
+        raw_remote_output: bool,
     ) -> zlink::Result<Result<VarlinkFingerResponse, VarlinkFingerClientError>>;
 }
 
@@ -82,6 +83,7 @@ pub enum VarlinkFingerClientRequest {
         request_info: FingerRequestInfo,
         request_networking: FingerRequestNetworking,
         disable_user_account_db: bool,
+        raw_remote_output: bool,
     },
 }
 
@@ -170,6 +172,7 @@ impl VarlinkRoowhoo2ClientServer {
         request_info: FingerRequestInfo,
         _request_networking: FingerRequestNetworking,
         _disable_user_account_db: bool,
+        _raw_remote_output: bool,
     ) -> VarlinkFingerResponse {
         tracing::debug!(
           user_queries = ?user_queries,
@@ -284,6 +287,7 @@ impl zlink::Service<zlink::unix::Stream> for VarlinkRoowhoo2ClientServer {
                 request_info,
                 request_networking,
                 disable_user_account_db,
+                raw_remote_output,
             }) => {
                 let result = match timeout(
                     Duration::from_secs(2),
@@ -293,6 +297,7 @@ impl zlink::Service<zlink::unix::Stream> for VarlinkRoowhoo2ClientServer {
                         request_info.clone(),
                         request_networking.clone(),
                         *disable_user_account_db,
+                        *raw_remote_output,
                     ),
                 )
                 .await
