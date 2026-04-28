@@ -73,8 +73,10 @@ in {
         # PrivateUsers = true;
         # ProtectHome = true;
 
-        AmbientCapabilities = "";
-        CapabilityBoundingSet = "";
+        # NOTE: We need this capability to be able to read inside the home directories of users without
+        #       them needing to open their homedirs to the rest of the system.
+        AmbientCapabilities = [ "CAP_DAC_READ_SEARCH" ];
+        CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
         DeviceAllow = "";
         DevicePolicy = "closed";
         LockPersonality = true;
