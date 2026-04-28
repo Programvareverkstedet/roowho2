@@ -1,0 +1,53 @@
+use std::sync::Arc;
+
+use anyhow::Context;
+use chrono::{Timelike, Utc};
+use tokio::net::UdpSocket;
+
+use crate::{
+    proto::{Whod, WhodStatusUpdate},
+    server::rwhod::RwhodStatusStore,
+};
+
+pub async fn rwhod_packet_receiver_task(
+    socket: Arc<UdpSocket>,
+    whod_status_store: RwhodStatusStore,
+) -> anyhow::Result<()> {
+    let mut buf = [0u8; Whod::MAX_SIZE];
+
+    loop {
+        let (len, src) = socket.recv_from(&mut buf).await?;
+
+        tracing::debug!("Received rwhod packet of length {} bytes from {}", len, src);
+
+        if len < Whod::HEADER_SIZE {
+            tracing::error!(
+                "Received too short packet from {src}: {len} bytes (needs to be at least {} bytes)",
+                Whod::HEADER_SIZE
+            );
+            continue;
+        }
+
+        let result = Whod::from_bytes(&buf[..len])
+            .context("Failed to parse whod packet")?
+            .try_into()
+            .map(|mut status_update: WhodStatusUpdate| {
+                let timestamp = Utc::now().with_nanosecond(0).unwrap_or(Utc::now());
+                status_update.recvtime = Some(timestamp);
+                status_update
+            })
+            .map_err(|e| anyhow::anyhow!("Invalid whod packet: {}", e));
+
+        match result {
+            Ok(status_update) => {
+                tracing::debug!("Processed whod packet from {src}: {:?}", status_update);
+
+                let mut store = whod_status_store.write().await;
+                store.insert(status_update.hostname.clone(), status_update);
+            }
+            Err(err) => {
+                tracing::error!("Error processing whod packet from {src}: {err}");
+            }
+        }
+    }
+}
