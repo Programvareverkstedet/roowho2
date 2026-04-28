@@ -1,6 +1,9 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 
-use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveTime, TimeDelta, Utc, Weekday};
+use anyhow::Context;
+use chrono::{
+    DateTime, Datelike, Duration, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike, Utc, Weekday,
+};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
@@ -132,9 +135,13 @@ fn parse_bsd_finger_time(time: &str) -> anyhow::Result<DateTime<Utc>> {
     let time_parts: Vec<_> = time.split_ascii_whitespace().collect();
 
     let time = &time_parts[..time_parts.len() - 1].join(" ");
-    let _timezone = time_parts[time_parts.len() - 1];
+    let timezone = time_parts[time_parts.len() - 1]
+        .trim_start_matches('(')
+        .trim_end_matches(')');
 
-    let now = Utc::now();
+    let tz = chrono_tz::Tz::from_str(timezone)
+        .context(format!("Failed to parse timezone in login time: {}", time))?;
+
     let mut parts = time.split_whitespace();
 
     let weekday = match parts.next() {
@@ -181,12 +188,13 @@ fn parse_bsd_finger_time(time: &str) -> anyhow::Result<DateTime<Utc>> {
         )
     })?;
 
+    let now = Utc::now();
     const MAX_YEARS_BACK: i32 = 10;
-
+    let mut year = None;
     for offset in 0..=MAX_YEARS_BACK {
-        let year = now.year() - offset;
+        let year_ = now.year() - offset;
 
-        let date = match NaiveDate::from_ymd_opt(year, month, day) {
+        let date = match NaiveDate::from_ymd_opt(year_, month, day) {
             Some(d) => d,
             None => continue,
         };
@@ -195,22 +203,26 @@ fn parse_bsd_finger_time(time: &str) -> anyhow::Result<DateTime<Utc>> {
             continue;
         }
 
-        let dt = date.and_time(clock);
-
-        if dt <= now.naive_utc() {
-            // TODO: apply timezone if we are able to parse it.
-            //       if not, try to get the local timezone offset.
-            //       if not, assume UTC.
-
-            return Ok(DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc));
-        }
+        year = Some(year_);
     }
 
-    Err(anyhow::anyhow!(
-        "Could not infer year for login time {} within {} years",
-        time,
-        MAX_YEARS_BACK
-    ))
+    if year.is_none() {
+        return Err(anyhow::anyhow!(
+            "Could not find a valid year for login time {} within {} years",
+            time,
+            MAX_YEARS_BACK
+        ));
+    }
+
+    tz.with_ymd_and_hms(year.unwrap(), month, day, clock.hour(), clock.minute(), 0)
+        .single()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Failed to convert login time to timezone-aware datetime: {}",
+                time
+            )
+        })
+        .map(|dt| dt.with_timezone(&Utc))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -763,6 +775,7 @@ mod tests {
             "Tue Feb 28 23:59 (UTC)",
             "Wed Dec 31 00:00 (UTC)",
             "Wed Dec 31 00:00 (GMT)",
+            "Wed Dec 31 00:00 (Asia/Tokyo)",
         ];
 
         for input in cases {
