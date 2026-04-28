@@ -9,7 +9,7 @@ use itertools::Itertools;
 use nix::sys::stat::stat;
 use serde::{Deserialize, Serialize};
 use users::all_users;
-use uucore::utmpx::Utmpx;
+use uucore::utmpx::{Utmpx, UtmpxRecord};
 
 use crate::proto::finger_protocol::{FingerResponseUserEntry, FingerResponseUserSession};
 
@@ -60,7 +60,7 @@ pub fn search_for_user(
             let matches_username = username.contains(search_string);
             let matches_fullname = match_fullnames && full_name.contains(search_string);
             if matches_username || matches_fullname {
-                match get_local_user(&username) {
+                match get_local_user(&username, None) {
                     Ok(Some(user_entry)) => Some(Ok(user_entry)),
                     Ok(None) => None, // User exists but has .nofinger, skip
                     Err(err) => Some(Err(err)),
@@ -78,9 +78,14 @@ pub fn finger_utmp_users(
 ) -> Vec<anyhow::Result<FingerResponseUserEntry>> {
     Utmpx::iter_all_records()
         .filter(|entry| entry.is_user_process())
-        .map(|entry| entry.user())
-        .dedup()
-        .flat_map(|username| get_local_user(&username).transpose())
+        .into_group_map_by(|entry| entry.user())
+        .into_iter()
+        .map(|(username, records)| get_local_user(&username, Some(records)))
+        .filter_map(|result| match result {
+            Ok(Some(user_entry)) => Some(Ok(user_entry)),
+            Ok(None) => None, // User has .nofinger, skip
+            Err(err) => Some(Err(err)),
+        })
         .collect()
 }
 
@@ -111,7 +116,14 @@ fn read_file_content_if_exists(path: &Path) -> anyhow::Result<Option<String>> {
 /// Retrieve local user information for the given username.
 ///
 /// Returns None if the user does not exist.
-fn get_local_user(username: &str) -> anyhow::Result<Option<FingerResponseUserEntry>> {
+fn get_local_user(
+    username: &str,
+    utmp_records: Option<Vec<UtmpxRecord>>,
+) -> anyhow::Result<Option<FingerResponseUserEntry>> {
+    tracing::trace!(
+        "Retrieving local user information for username: {}",
+        username
+    );
     let username = username.to_string();
     let user_entry = match nix::unistd::User::from_name(&username) {
         Ok(Some(user)) => user,
@@ -142,16 +154,20 @@ fn get_local_user(username: &str) -> anyhow::Result<Option<FingerResponseUserEnt
 
     let hostname = hostname()?.to_str().unwrap_or("localhost").to_string();
 
-    let mut utmpx_records = Utmpx::iter_all_records()
-        .filter(|entry| entry.user() == username)
-        .filter(|entry| entry.is_user_process())
-        .peekable();
+    let utmpx_records = match utmp_records {
+        Some(records) => records,
+        None => Utmpx::iter_all_records()
+            .filter(|entry| entry.user() == username)
+            .filter(|entry| entry.is_user_process())
+            .collect::<Vec<_>>(),
+    };
 
     // TODO: Don't use utmp entries for this, read from lastlog instead
-    let user_never_logged_in = utmpx_records.peek().is_none();
+    let user_never_logged_in = utmpx_records.is_empty();
 
     let now = Utc::now().with_nanosecond(0).unwrap_or(Utc::now());
     let sessions: Vec<FingerResponseUserSession> = utmpx_records
+        .into_iter()
         .filter_map(|entry| {
             let login_time = entry
                 .login_time()
@@ -257,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_finger_root() {
-        let user_entry = get_local_user("root").unwrap().unwrap();
+        let user_entry = get_local_user("root", None).unwrap().unwrap();
         assert_eq!(user_entry.username, "root");
     }
 
