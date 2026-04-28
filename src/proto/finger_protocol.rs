@@ -450,12 +450,12 @@ impl FingerResponseStructuredUserEntry {
         } else if let Some(line) = next_line
             && (line.trim().starts_with("Mail last read"))
         {
-            // current_index += 1;
+            current_index += 1;
             Some(MailStatus::try_from_finger_response_lines(line)?)
         } else if let Some(line) = next_line
             && line.trim() == "No mail."
         {
-            // current_index += 1;
+            current_index += 1;
             Some(MailStatus::NoMail)
         } else {
             tracing::warn!(
@@ -466,7 +466,89 @@ impl FingerResponseStructuredUserEntry {
             None
         };
 
-        // TODO: parse pgp, project and plan from remaining lines
+        let next_line = lines.get(current_index);
+
+        let pgpkey = if let Some(line) = next_line
+            && line.trim().starts_with("PGP key:")
+        {
+            current_index += 1;
+            let mut pgp_lines = Vec::new();
+            while let Some(line) = lines.get(current_index) {
+                let trimmed = line.trim();
+                if trimmed.starts_with("Project:") || trimmed.starts_with("Plan:") {
+                    break;
+                }
+                pgp_lines.push(trimmed);
+                current_index += 1;
+            }
+            Some(pgp_lines.join("\n"))
+        } else {
+            None
+        };
+
+        let next_line = lines.get(current_index);
+
+        let project = if let Some(line) = next_line
+            && line.trim().starts_with("Project:")
+        {
+            if line.trim().trim_start_matches("Project:").trim().is_empty() {
+                current_index += 1;
+
+                let mut project_lines = Vec::new();
+                while let Some(line) = lines.get(current_index) {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("Plan:") {
+                        break;
+                    }
+                    project_lines.push(trimmed);
+                    current_index += 1;
+                }
+                Some(project_lines.join("\n"))
+            } else {
+                current_index += 1;
+                Some(
+                    line.trim()
+                        .trim_start_matches("Project:")
+                        .trim()
+                        .to_string(),
+                )
+            }
+        } else {
+            None
+        };
+
+        let next_line = lines.get(current_index);
+
+        let plan = if let Some(line) = next_line
+            && line.trim().starts_with("Plan:")
+        {
+            if line.trim().trim_start_matches("Plan:").trim().is_empty() {
+                current_index += 1;
+                let mut plan_lines = Vec::new();
+                while let Some(line) = lines.get(current_index) {
+                    plan_lines.push(line.trim());
+                    current_index += 1;
+                }
+                Some(plan_lines.join("\n"))
+            } else {
+                current_index += 1;
+                Some(line.trim().trim_start_matches("Plan:").trim().to_string())
+            }
+        } else if let Some(line) = next_line
+            && line.trim() == "No Plan."
+        {
+            current_index += 1;
+            None
+        } else {
+            None
+        };
+
+        debug_assert!(
+            current_index == lines.len(),
+            "Not all lines in finger response were parsed for user {}. Unparsed lines: {:?}",
+            username,
+            &lines[current_index..]
+        );
 
         Ok(Self::new(
             username,
@@ -480,9 +562,9 @@ impl FingerResponseStructuredUserEntry {
             sessions,
             forward_status,
             mail_status,
-            None,
-            None,
-            None,
+            pgpkey,
+            project,
+            plan,
         ))
     }
 }
@@ -736,7 +818,7 @@ mod tests {
               Login: alice           			Name: Alice Wonderland
               Directory: /home/alice             	Shell: /bin/bash
               On since Mon Mar  1 10:00 (UTC) on pts/0, idle 5:00, from host.example.com
-              No Mail.
+              No mail.
               No Plan.
             "}
         .trim();
@@ -764,7 +846,7 @@ mod tests {
               Office: 123 Main St, 012-345-6789
               Home Phone: +0-123-456-7890
               On since Mon Mar  1 10:00 (UTC) on pts/0, idle 5:00, from host.example.com
-              No Mail.
+              No mail.
               No Plan.
             "}
         .trim();
@@ -790,7 +872,7 @@ mod tests {
               Office Phone: 012-345-6789
               Home Phone: +0-123-456-7890
               On since Mon Mar  1 10:00 (UTC) on pts/0, idle 5:00, from host.example.com
-              No Mail.
+              No mail.
               No Plan.
             "}
         .trim();
@@ -813,7 +895,7 @@ mod tests {
               Login: bob           			Name: Bob Builder
               Directory: /home/bob             	Shell: /bin/zsh
               Never logged in.
-              No Mail.
+              No mail.
               No Plan.
             "}
         .trim();
@@ -830,7 +912,7 @@ mod tests {
     }
 
     #[test]
-    fn test_finger_user_entry_no_mail() {
+    fn test_finger_user_entry_parsing_no_mail() {
         let response_content = indoc::indoc! {"
             Login: bob           			Name: Bob Builder
             Directory: /home/bob             	Shell: /bin/zsh
@@ -850,7 +932,7 @@ mod tests {
     }
 
     #[test]
-    fn test_finger_user_entry_new_mail_received() {
+    fn test_finger_user_entry_parsing_new_mail_received() {
         let response_content = indoc::indoc! {"
             Login: bob           			Name: Bob Builder
             Directory: /home/bob             	Shell: /bin/zsh
@@ -877,7 +959,7 @@ mod tests {
     }
 
     #[test]
-    fn test_finger_user_entry_mail_last_read() {
+    fn test_finger_user_entry_parsing_mail_last_read() {
         let response_content = indoc::indoc! {"
             Login: bob           			Name: Bob Builder
             Directory: /home/bob             	Shell: /bin/zsh
@@ -898,6 +980,111 @@ mod tests {
             Some(MailStatus::MailLastRead(
                 Utc.with_ymd_and_hms(2021, 3, 1, 10, 0, 0).unwrap()
             ))
+        );
+    }
+
+    #[test]
+    fn test_finger_user_entry_parsing_single_line_plan_project() {
+        let response_content = indoc::indoc! {"
+            Login: bob           			Name: Bob Builder
+            Directory: /home/bob             	Shell: /bin/zsh
+            Never logged in.
+            Mail last read Mon Mar  1 10:00 (UTC)
+            Project: Build a new house.
+            Plan: Build a new house.
+          "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "bob".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(user_entry.project, Some("Build a new house.".to_string()));
+        assert_eq!(user_entry.plan, Some("Build a new house.".to_string()));
+    }
+
+    #[test]
+    fn test_finger_user_entry_parsing_multiline_pgp_plan_project() {
+        let response_content = indoc::indoc! {"
+            Login: bob           			Name: Bob Builder
+            Directory: /home/bob             	Shell: /bin/zsh
+            Never logged in.
+            Mail last read Mon Mar  1 10:00 (UTC)
+            PGP key:
+            -----BEGIN PGP KEY-----
+            Version: GnuPG v1
+            ABCDEFGHIJKLMNOPQRSTUVWXYZ
+            -----END PGP KEY-----
+            Project:
+            Build a new house.
+
+            Need to buy materials.
+            Plan:
+            Build a new house.
+
+            Need to buy materials.
+          "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "bob".to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            user_entry.pgp_key,
+            Some("-----BEGIN PGP KEY-----\nVersion: GnuPG v1\nABCDEFGHIJKLMNOPQRSTUVWXYZ\n-----END PGP KEY-----".to_string()),
+        );
+
+        assert_eq!(
+            user_entry.project,
+            Some("Build a new house.\n\nNeed to buy materials.".to_string())
+        );
+        assert_eq!(
+            user_entry.plan,
+            Some("Build a new house.\n\nNeed to buy materials.".to_string())
+        );
+    }
+
+    #[test]
+    fn test_finger_user_entry_parsing_plan_keyword_in_plan() {
+        let response_content = indoc::indoc! {"
+            Login: bob           			Name: Bob Builder
+            Directory: /home/bob             	Shell: /bin/zsh
+            Never logged in.
+            Mail last read Mon Mar  1 10:00 (UTC)
+            Project:
+            I put an extra Plan: keyword here for kaos.
+
+            :3:3:3
+            Plan:
+            Build a new house.
+
+            Plan:
+            Need to buy materials.
+
+            The plan is to build a new house.
+          "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "bob".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            user_entry.project,
+            Some("I put an extra Plan: keyword here for kaos.\n\n:3:3:3".to_string())
+        );
+        assert_eq!(
+            user_entry.plan,
+            Some("Build a new house.\n\nPlan:\nNeed to buy materials.\n\nThe plan is to build a new house.".to_string())
         );
     }
 }
