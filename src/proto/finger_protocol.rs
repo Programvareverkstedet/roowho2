@@ -424,12 +424,43 @@ impl FingerResponseUserEntry {
         let forward_status = if let Some(line) = next_line
             && line.trim().starts_with("Mail forwarded to ")
         {
+            current_index += 1;
             Some(line.trim().trim_prefix("Mail forwarded to ").to_string())
         } else {
             None
         };
 
-        // TODO: parse forward_status, mail_status, plan from remaining lines
+        let next_line = lines.get(current_index);
+
+        let mail_status = if let Some(line) = next_line
+            && line.trim().starts_with("New mail received")
+        {
+            current_index += 2;
+            let mail_status_str =
+                format!("{}\n{}", line, lines.get(current_index - 1).unwrap_or(&""));
+            Some(MailStatus::try_from_finger_response_lines(
+                &mail_status_str,
+            )?)
+        } else if let Some(line) = next_line
+            && (line.trim().starts_with("Mail last read"))
+        {
+            // current_index += 1;
+            Some(MailStatus::try_from_finger_response_lines(line)?)
+        } else if let Some(line) = next_line
+            && line.trim() == "No mail."
+        {
+            // current_index += 1;
+            Some(MailStatus::NoMail)
+        } else {
+            tracing::warn!(
+                "Failed to parse mail status for user {} from line: {:?}",
+                username,
+                next_line
+            );
+            None
+        };
+
+        // TODO: parse pgp, project and plan from remaining lines
 
         Ok(Self::new(
             username,
@@ -442,7 +473,7 @@ impl FingerResponseUserEntry {
             never_logged_in,
             sessions,
             forward_status,
-            None,
+            mail_status,
             None,
             None,
             None,
@@ -453,26 +484,43 @@ impl FingerResponseUserEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MailStatus {
     NoMail,
-    NewMailReceived(DateTime<Utc>),
-    UnreadSince(DateTime<Utc>),
+    NewMailReceived {
+        received_time: DateTime<Utc>,
+        unread_since: DateTime<Utc>,
+    },
     MailLastRead(DateTime<Utc>),
 }
 
 impl MailStatus {
-    pub fn try_from_finger_response_line(str: &str) -> anyhow::Result<Self> {
+    pub fn try_from_finger_response_lines(str: &str) -> anyhow::Result<Self> {
         if str.trim() == "No mail." {
             Ok(Self::NoMail)
         } else if str.trim().starts_with("New mail received") {
-            let datetime = parse_bsd_finger_time(str.trim().trim_prefix("New mail received "))?;
-            Ok(Self::NewMailReceived(datetime))
-        } else if str.trim().starts_with("Unread since") {
-            let datetime = parse_bsd_finger_time(str.trim().trim_prefix("Unread since "))?;
-            Ok(Self::UnreadSince(datetime))
+            let mut lines = str.lines();
+            let received_time_line = parse_bsd_finger_time(
+                lines
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("Missing received time line in mail status"))?
+                    .trim()
+                    .trim_start_matches("New mail received "),
+            )?;
+            let unread_since_line = parse_bsd_finger_time(
+                lines
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("Missing unread since line in mail status"))?
+                    .trim()
+                    .trim_start_matches("Unread since "),
+            )?;
+
+            Ok(Self::NewMailReceived {
+                received_time: received_time_line,
+                unread_since: unread_since_line,
+            })
         } else if str.trim().starts_with("Mail last read") {
             let datetime = parse_bsd_finger_time(str.trim().trim_prefix("Mail last read "))?;
             Ok(Self::MailLastRead(datetime))
         } else {
-            anyhow::bail!("")
+            anyhow::bail!("Unrecognized mail status line in finger response: {}", str);
         }
     }
 }
@@ -593,7 +641,7 @@ impl FingerResponseUserSession {
 
 #[cfg(test)]
 mod tests {
-    use chrono::Timelike;
+    use chrono::{TimeZone, Timelike};
 
     use super::*;
 
@@ -765,5 +813,71 @@ mod tests {
 
         assert!(user_entry.never_logged_in);
         assert!(user_entry.sessions.is_empty());
+    }
+
+    #[test]
+    fn test_finger_user_entry_no_mail() {
+        let response_content = indoc::indoc! {"
+            Login: bob           			Name: Bob Builder
+            Directory: /home/bob             	Shell: /bin/zsh
+            Never logged in.
+            No mail.
+            No Plan.
+          "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry =
+            FingerResponseUserEntry::try_from_raw_finger_response(&response, "bob".to_string())
+                .unwrap();
+        assert_eq!(user_entry.mail_status, Some(MailStatus::NoMail));
+    }
+
+    #[test]
+    fn test_finger_user_entry_new_mail_received() {
+        let response_content = indoc::indoc! {"
+            Login: bob           			Name: Bob Builder
+            Directory: /home/bob             	Shell: /bin/zsh
+            Never logged in.
+            New mail received Mon Mar  1 10:00 (UTC)
+                 Unread since Mon Mar  1 09:00 (UTC)
+            No Plan.
+          "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry =
+            FingerResponseUserEntry::try_from_raw_finger_response(&response, "bob".to_string())
+                .unwrap();
+        assert_eq!(
+            user_entry.mail_status,
+            Some(MailStatus::NewMailReceived {
+                received_time: Utc.with_ymd_and_hms(2021, 3, 1, 10, 0, 0).unwrap(),
+                unread_since: Utc.with_ymd_and_hms(2021, 3, 1, 9, 0, 0).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_finger_user_entry_mail_last_read() {
+        let response_content = indoc::indoc! {"
+            Login: bob           			Name: Bob Builder
+            Directory: /home/bob             	Shell: /bin/zsh
+            Never logged in.
+            Mail last read Mon Mar  1 10:00 (UTC)
+            No Plan.
+          "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry =
+            FingerResponseUserEntry::try_from_raw_finger_response(&response, "bob".to_string())
+                .unwrap();
+        assert_eq!(
+            user_entry.mail_status,
+            Some(MailStatus::MailLastRead(
+                Utc.with_ymd_and_hms(2021, 3, 1, 10, 0, 0).unwrap()
+            ))
+        );
     }
 }
