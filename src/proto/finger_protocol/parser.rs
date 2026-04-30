@@ -252,25 +252,38 @@ fn parse_gecos_fields(
     Ok((office, office_phone, home_phone))
 }
 
-// TODO: take lines that start with "On since", and if they contain "from" then check if the next line contains "idle" and if so, join them
 fn parse_user_sessions(
     lines: &[&str],
     current_index: &mut usize,
 ) -> Vec<FingerResponseUserSession> {
-    let sessions: Vec<_> = lines
-        .iter()
-        .skip(*current_index)
-        .take_while(|line| line.starts_with("On since"))
-        .filter_map(|line| match parse_user_session(line) {
-            Ok(session) => Some(session),
+    let mut sessions = Vec::new();
+
+    while let Some(line) = lines.get(*current_index)
+        && line.starts_with("On since")
+    {
+        let line_to_parse = if line.contains("from")
+            && let Some(next_line) = lines.get(*current_index + 1)
+            && next_line
+                .trim_suffix(" (messages off)")
+                .strip_suffix("idle")
+                .is_some()
+        {
+            *current_index += 2;
+            line.to_string() + "\n" + next_line
+        } else {
+            *current_index += 1;
+            line.to_string()
+        };
+
+        match parse_user_session(&line_to_parse) {
+            Ok(session) => {
+                sessions.push(session);
+            }
             Err(_) => {
                 tracing::warn!("Failed to parse user session from line: {}", line);
-                None
             }
-        })
-        .collect();
-
-    *current_index += sessions.len();
+        }
+    }
 
     sessions
 }
@@ -291,22 +304,39 @@ pub fn parse_user_session(line: &str) -> anyhow::Result<FingerResponseUserSessio
 
     let login_time = parse_bsd_finger_time(&login_time_str)?;
 
-    let tty = parts
+    let (tty_loc, tty_str) = parts
         .iter()
-        .skip_while(|&&s| s != "on")
+        .enumerate()
+        .skip(2)
+        .skip_while(|&(_, &s)| s != "on")
         .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("Failed to find tty in finger session line: {line}"))?
-        .trim_end_matches(',')
+        .ok_or_else(|| anyhow::anyhow!("Failed to find tty in finger session line: {line}"))?;
+    let tty = tty_str.trim_end_matches(',').to_string();
+
+    let (host_loc, host) = match parts
+        .iter()
+        .enumerate()
+        .skip(tty_loc)
+        .skip_while(|&(_, &s)| s != "from")
+        .nth(1)
+    {
+        Some((host_loc, host)) => (host_loc, Some(host.to_string())),
+        None => (tty_loc, None),
+    };
+
+    let idle_str = parts
+        .iter()
+        .skip(host_loc + 1)
+        .take_while(|&&x| x != "idle")
+        .join(" ")
+        .trim_end_matches("(messages off)")
         .to_string();
 
-    let host = parts
-        .iter()
-        .skip_while(|&&s| s != "from")
-        .nth(1)
-        .map(|s| s.to_string());
-
-    // FIXME: parse idle time
-    let idle_time = None;
+    let idle_time = if idle_str.is_empty() {
+        None
+    } else {
+        Some(parse_user_session_idle_time(&idle_str)?)
+    };
 
     let messages_on = !line.ends_with("(messages off)");
 
