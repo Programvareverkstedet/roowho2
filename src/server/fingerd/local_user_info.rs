@@ -170,28 +170,31 @@ fn get_local_user(
 
             let tty_device_stat = stat(&Path::new("/dev").join(entry.tty_device())).ok();
 
-            let idle_time = tty_device_stat
-                .and_then(|st| {
-                    let last_active = DateTime::<Utc>::from_timestamp_secs(st.st_atime)?;
-                    Some((now - last_active).max(Duration::zero()))
-                })
-                .unwrap_or(Duration::zero());
+            let idle_time = tty_device_stat.and_then(|st| {
+                let last_active = DateTime::<Utc>::from_timestamp_secs(st.st_atime)?;
+                let result = (now - last_active).max(Duration::zero());
+                if result == Duration::zero() {
+                    None
+                } else {
+                    debug_assert!(
+                        result.num_seconds() >= 0,
+                        "Idle time should never be negative"
+                    );
+
+                    Some(result)
+                }
+            });
 
             // Check if the write permission for "others" is set
             let messages_on = tty_device_stat
                 .map(|st| st.st_mode & 0o002 != 0)
                 .unwrap_or(false);
 
-            debug_assert!(
-                idle_time.num_seconds() >= 0,
-                "Idle time should never be negative"
-            );
-
             Some(FingerResponseUserSession::new(
                 entry.tty_device(),
                 login_time,
+                Some(hostname.clone()),
                 idle_time,
-                hostname.clone(),
                 messages_on,
             ))
         })
