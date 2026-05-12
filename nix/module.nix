@@ -127,6 +127,9 @@ in {
           # NOTE: finger might need access to mail directories
           "-/var/spool"
           "-/var/mail"
+
+          # NOTE: finger needs access to stat tty devices
+          "/dev"
         ];
 
         UMask = "0077";
