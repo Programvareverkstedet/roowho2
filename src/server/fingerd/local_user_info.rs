@@ -168,26 +168,37 @@ fn get_local_user(
                 .checked_to_utc()
                 .and_then(|t| DateTime::<Utc>::from_timestamp_secs(t.unix_timestamp()))?;
 
-            let tty_device_stat = stat(&Path::new("/dev").join(entry.tty_device())).ok();
+            let tty_device_path = Path::new("/dev").join(entry.tty_device());
+            let tty_device_stat = stat(&tty_device_path).ok();
 
-            let idle_time = tty_device_stat.and_then(|st| {
-                let last_active = DateTime::<Utc>::from_timestamp_secs(st.st_atime)?;
-                let result = (now - last_active).max(Duration::zero());
-                if result == Duration::zero() {
-                    None
-                } else {
-                    debug_assert!(
-                        result.num_seconds() >= 0,
-                        "Idle time should never be negative"
-                    );
+            let tty_is_x_console = entry.tty_device().starts_with(':');
 
-                    Some(result)
-                }
-            });
+            let idle_time = if tty_is_x_console {
+                None
+            } else {
+                tty_device_stat.and_then(|st| {
+                    let last_active = DateTime::<Utc>::from_timestamp_secs(st.st_atime)?;
+                    let result = (now - last_active).max(Duration::zero());
+                    if result == Duration::zero() {
+                        None
+                    } else {
+                        debug_assert!(
+                            result.num_seconds() >= 0,
+                            "Idle time should never be negative"
+                        );
 
-            // Check if the write permission for "others" is set
-            let messages_on = tty_device_stat
-                .map(|st| st.st_mode & 0o002 != 0)
+                        Some(result)
+                    }
+                })
+            };
+
+            let messages_on =
+              // X console logins does not show the tty, so messages should be considered off in that case
+              !tty_is_x_console &&
+              // Check if the user has write permissions to the tty device,
+              // indicating whether messages are on or off
+              tty_device_stat
+                .map(|st| st.st_mode & 0o220 == 0o220)
                 .unwrap_or(false);
 
             Some(FingerResponseUserSession::new(
