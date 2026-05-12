@@ -1,9 +1,12 @@
 use anyhow::Context;
 use clap::{CommandFactory, Parser, builder::ArgPredicate};
 use clap_complete::{Shell, generate};
-use roowho2_lib::server::{
-    fingerd::{FingerRequestInfo, FingerRequestNetworking},
-    varlink_api::VarlinkFingerClientProxy,
+use roowho2_lib::{
+    proto::finger_protocol::FingerResponseUserEntry,
+    server::{
+        fingerd::{FingerRequestInfo, FingerRequestNetworking},
+        varlink_api::VarlinkFingerClientProxy,
+    },
 };
 
 /// User information lookup program
@@ -199,7 +202,14 @@ async fn main() -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(&reply).unwrap());
     } else {
         for user in reply {
-            println!("{:#?}", user);
+            match user {
+                FingerResponseUserEntry::Structured(structured) => {
+                    println!("{}", structured.classic_format());
+                }
+                FingerResponseUserEntry::Raw(raw) => {
+                    println!("{}", raw);
+                }
+            }
         }
     }
 
