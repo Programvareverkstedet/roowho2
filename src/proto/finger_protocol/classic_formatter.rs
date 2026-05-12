@@ -1,6 +1,8 @@
 use chrono::{Duration, TimeDelta};
 
-use crate::proto::finger_protocol::{FingerResponseStructuredUserEntry, MailStatus};
+use crate::proto::finger_protocol::{
+    FingerResponseStructuredUserEntry, FingerResponseUserSession, MailStatus,
+};
 
 pub fn classic_format_finger_response_structured_user_entry(
     entry: &FingerResponseStructuredUserEntry,
@@ -38,27 +40,8 @@ pub fn classic_format_finger_response_structured_user_entry(
             .unwrap_or(0);
 
         for session in &entry.sessions {
-            result += &format!(
-                "On since {} on {}",
-                session.login_time.format("%a %b %e %H:%M (%Z)"),
-                session.tty,
-            );
-
-            if let Some(ref host) = session.host {
-                result += &format!("from {}\n", host);
-            }
-
-            if let Some(idle_time) = session.idle_time {
-                result += &format!(
-                    "   {:<width$}",
-                    format_idle_time_for_finger(idle_time),
-                    width = max_tty_len + 1
-                );
-            }
-
-            if !session.messages_on {
-                result += " (messages off)"
-            }
+            result += &format_session_for_finger(session, max_tty_len);
+            result += "\n";
         }
     }
 
@@ -105,6 +88,32 @@ pub fn classic_format_finger_response_structured_user_entry(
     result.trim().to_string()
 }
 
+fn format_session_for_finger(session: &FingerResponseUserSession, max_tty_len: usize) -> String {
+    let mut result = String::new();
+
+    result += &format!(
+        "On since {} on {} from {}",
+        session.login_time.format("%a %b %e %H:%M (%Z)"),
+        session.tty,
+        session.host.as_deref().unwrap_or("unknown")
+    );
+
+    if let Some(idle_time) = session.idle_time {
+        result += &format!(
+            "\n{:width$}{} idle",
+            "",
+            format_idle_time_for_finger(idle_time),
+            width = max_tty_len - session.tty.len() + 3,
+        );
+    }
+
+    if !session.messages_on {
+        result += "\n     (messages off)";
+    }
+
+    result
+}
+
 fn format_idle_time_for_finger(idle_time: TimeDelta) -> String {
     debug_assert!(
         idle_time.num_seconds() >= 0,
@@ -133,5 +142,105 @@ fn format_idle_time_for_finger(idle_time: TimeDelta) -> String {
         result += &format!("{} second{} ", seconds, if seconds == 1 { "" } else { "s" });
     }
 
-    result
+    result.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{TimeZone, Utc};
+    use indoc::indoc;
+
+    use crate::proto::finger_protocol::FingerResponseUserSession;
+
+    use super::*;
+
+    #[test]
+    fn test_format_session_for_finger() {
+        let values = [
+            (
+                FingerResponseUserSession {
+                    tty: "pts/14".to_string(),
+                    login_time: Utc.with_ymd_and_hms(2026, 5, 12, 15, 39, 0).unwrap(),
+                    host: Some(":pts/21:S.5".to_string()),
+                    idle_time: Some(Duration::days(3) + Duration::hours(18)),
+                    messages_on: true,
+                },
+                indoc! {
+                  "
+                  On since Tue May 12 15:39 (UTC) on pts/14 from :pts/21:S.5
+                     3 days 18 hours idle
+                "
+                }
+                .trim()
+                .to_string(),
+            ),
+            (
+                FingerResponseUserSession {
+                    tty: "pts/16".to_string(),
+                    login_time: Utc.with_ymd_and_hms(2026, 5, 12, 15, 39, 0).unwrap(),
+                    host: Some(":pts/21:S.6".to_string()),
+                    idle_time: Some(Duration::hours(18) + Duration::minutes(47)),
+                    messages_on: true,
+                },
+                indoc! {
+                "
+                  On since Tue May 12 15:39 (UTC) on pts/16 from :pts/21:S.6
+                     18 hours 47 minutes idle
+                "
+                }
+                .trim()
+                .to_string(),
+            ),
+            (
+                FingerResponseUserSession {
+                    tty: "pts/21".to_string(),
+                    login_time: Utc.with_ymd_and_hms(2026, 5, 12, 15, 39, 0).unwrap(),
+                    host: Some("212.102.29.193".to_string()),
+                    idle_time: Some(Duration::minutes(24) + Duration::seconds(22)),
+                    messages_on: false,
+                },
+                indoc! {
+                "
+                  On since Tue May 12 15:39 (UTC) on pts/21 from 212.102.29.193
+                     24 minutes 22 seconds idle
+                       (messages off)
+                "
+                }
+                .trim()
+                .to_string(),
+            ),
+        ];
+
+        for (session, expected) in values {
+            assert_eq!(
+                format_session_for_finger(&session, "pts/10".len()),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_format_session_for_finger_long_tty_string() {
+        let session = FingerResponseUserSession {
+            tty: "pts/1".to_string(),
+            login_time: Utc.with_ymd_and_hms(2026, 5, 12, 15, 39, 0).unwrap(),
+            host: Some(":pts/21:S.5".to_string()),
+            idle_time: Some(Duration::hours(1) + Duration::minutes(30)),
+            messages_on: true,
+        };
+
+        let expected = indoc! {
+            "
+              On since Tue May 12 15:39 (UTC) on pts/1 from :pts/21:S.5
+                   1 hour 30 minutes idle
+            "
+        }
+        .trim()
+        .to_string();
+
+        assert_eq!(
+            format_session_for_finger(&session, "pts/123".len()),
+            expected
+        );
+    }
 }
