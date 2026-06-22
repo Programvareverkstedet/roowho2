@@ -417,11 +417,13 @@ impl TryFrom<WhodUserEntry> for Whoent {
     fn try_from(value: WhodUserEntry) -> Result<Self, Self::Error> {
         let mut out_line = [0u8; Outmp::MAX_TTY_NAME_LEN];
         let tty_bytes = value.tty.as_bytes();
-        out_line[..tty_bytes.len().min(Outmp::MAX_TTY_NAME_LEN)].copy_from_slice(tty_bytes);
+        let tty_len = tty_bytes.len().min(Outmp::MAX_TTY_NAME_LEN);
+        out_line[..tty_len].copy_from_slice(&tty_bytes[..tty_len]);
 
         let mut out_name = [0u8; Outmp::MAX_USER_ID_LEN];
         let user_id_bytes = value.user_id.as_bytes();
-        out_name[..user_id_bytes.len().min(Outmp::MAX_USER_ID_LEN)].copy_from_slice(user_id_bytes);
+        let user_id_len = user_id_bytes.len().min(Outmp::MAX_USER_ID_LEN);
+        out_name[..user_id_len].copy_from_slice(&user_id_bytes[..user_id_len]);
 
         let out_time = value
             .login_time
@@ -450,8 +452,8 @@ impl TryFrom<WhodStatusUpdate> for Whod {
     fn try_from(value: WhodStatusUpdate) -> Result<Self, Self::Error> {
         let mut wd_hostname = [0u8; Whod::MAX_HOSTNAME_LEN];
         let hostname_bytes = value.hostname.as_bytes();
-        wd_hostname[..hostname_bytes.len().min(Whod::MAX_HOSTNAME_LEN)]
-            .copy_from_slice(hostname_bytes);
+        let hostname_len = hostname_bytes.len().min(Whod::MAX_HOSTNAME_LEN);
+        wd_hostname[..hostname_len].copy_from_slice(&hostname_bytes[..hostname_len]);
 
         let wd_sendtime = value
             .sendtime
@@ -554,5 +556,182 @@ mod tests {
         invalid_type_bytes[0] = Whod::WHODVERSION;
         invalid_type_bytes[1] = 99; // invalid type
         assert!(Whod::from_bytes(&invalid_type_bytes).is_err());
+    }
+
+    #[test]
+    fn test_whod_user_entry_conversion() {
+        let user_entry = WhodUserEntry::new(
+            "tty1".to_string(),
+            "user1".to_string(),
+            Utc.with_ymd_and_hms(2024, 6, 1, 10, 0, 0).unwrap(),
+            Duration::minutes(5),
+        );
+
+        let whoent = Whoent::try_from(user_entry.clone()).expect("Conversion to Whoent failed");
+        let converted_back =
+            WhodUserEntry::try_from(whoent).expect("Conversion from Whoent failed");
+
+        assert_eq!(user_entry, converted_back);
+    }
+
+    #[test]
+    fn test_whod_status_update_conversion() {
+        let status_update = WhodStatusUpdate::new(
+            Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap(),
+            Some(Utc.with_ymd_and_hms(2024, 6, 1, 12, 5, 0).unwrap()),
+            "testhost".to_string(),
+            (25, 20, 18),
+            Utc.with_ymd_and_hms(2024, 5, 31, 8, 0, 0).unwrap(),
+            vec![
+                WhodUserEntry::new(
+                    "tty1".to_string(),
+                    "user1".to_string(),
+                    Utc.with_ymd_and_hms(2024, 6, 1, 10, 0, 0).unwrap(),
+                    Duration::minutes(5),
+                ),
+                WhodUserEntry::new(
+                    "tty2".to_string(),
+                    "user2".to_string(),
+                    Utc.with_ymd_and_hms(2024, 6, 1, 11, 0, 0).unwrap(),
+                    Duration::minutes(10),
+                ),
+            ],
+        );
+
+        let whod_struct = Whod::try_from(status_update.clone()).expect("Conversion to Whod failed");
+        let converted_back =
+            WhodStatusUpdate::try_from(whod_struct).expect("Conversion from Whod failed");
+
+        assert_eq!(status_update, converted_back);
+    }
+
+    #[test]
+    fn test_whod_user_entry_invalid_utf8() {
+        let mut whoent = Whoent::zeroed();
+        whoent.we_utmp.out_line = [0xff, 0xfe, 0xfd, 0, 0, 0, 0, 0]; // Invalid UTF-8
+        whoent.we_utmp.out_name = [0xff, 0xfe, 0xfd, 0, 0, 0, 0, 0]; // Invalid UTF-8
+        whoent.we_utmp.out_time = 1_700_000_000; // Some valid timestamp
+        whoent.we_idle = 60; // 1 minute
+
+        let result = WhodUserEntry::try_from(whoent);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_whod_user_entry_conversion_username_gets_truncated() {
+        let mut whoent = Whoent::zeroed();
+        whoent.we_utmp.out_name = [b'a'; Outmp::MAX_USER_ID_LEN];
+        whoent.we_utmp.out_time = 1_700_000_000;
+        whoent.we_idle = 60;
+
+        let result = WhodUserEntry::try_from(whoent);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap().user_id,
+            [b'a'; Outmp::MAX_USER_ID_LEN]
+                .iter()
+                .map(|&c| c as char)
+                .collect::<String>()
+        );
+    }
+
+    #[test]
+    fn test_whod_user_entry_conversion_tty_gets_truncated() {
+        let mut whoent = Whoent::zeroed();
+        whoent.we_utmp.out_line = [b'b'; Outmp::MAX_TTY_NAME_LEN];
+        whoent.we_utmp.out_time = 1_700_000_000;
+        whoent.we_idle = 60;
+
+        let result = WhodUserEntry::try_from(whoent);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap().tty,
+            [b'b'; Outmp::MAX_TTY_NAME_LEN]
+                .iter()
+                .map(|&c| c as char)
+                .collect::<String>()
+        );
+    }
+
+    #[test]
+    fn test_whod_status_update_hostname_gets_truncated() {
+        let long_hostname = "a".repeat(Whod::MAX_HOSTNAME_LEN + 10);
+        let status_update = WhodStatusUpdate::new(
+            Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap(),
+            Some(Utc.with_ymd_and_hms(2024, 6, 1, 12, 5, 0).unwrap()),
+            long_hostname.clone(),
+            (25, 20, 18),
+            Utc.with_ymd_and_hms(2024, 5, 31, 8, 0, 0).unwrap(),
+            vec![],
+        );
+
+        let whod_struct = Whod::try_from(status_update.clone()).expect("Conversion to Whod failed");
+        let converted_back =
+            WhodStatusUpdate::try_from(whod_struct).expect("Conversion from Whod failed");
+
+        assert_eq!(
+            converted_back.hostname,
+            long_hostname[..Whod::MAX_HOSTNAME_LEN].to_string()
+        );
+    }
+
+    #[test]
+    fn test_whod_status_update_users_get_truncated() {
+        let users = (0..(Whod::MAX_WHOENTRIES + 10))
+            .map(|i| {
+                WhodUserEntry::new(
+                    format!("tty{}", i),
+                    format!("user{}", i),
+                    Utc.with_ymd_and_hms(2024, 6, 1, 10, 0, 0).unwrap(),
+                    Duration::minutes(i as i64),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let status_update = WhodStatusUpdate::new(
+            Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap(),
+            Some(Utc.with_ymd_and_hms(2024, 6, 1, 12, 5, 0).unwrap()),
+            "testhost".to_string(),
+            (25, 20, 18),
+            Utc.with_ymd_and_hms(2024, 5, 31, 8, 0, 0).unwrap(),
+            users,
+        );
+
+        let whod_struct = Whod::try_from(status_update.clone()).expect("Conversion to Whod failed");
+        let converted_back =
+            WhodStatusUpdate::try_from(whod_struct).expect("Conversion from Whod failed");
+
+        assert_eq!(converted_back.users.len(), Whod::MAX_WHOENTRIES);
+
+        for (i, user) in converted_back.users.iter().enumerate() {
+            assert_eq!(user.tty, format!("tty{}", i));
+            assert_eq!(user.user_id, format!("user{}", i));
+        }
+    }
+
+    #[test]
+    fn test_whod_status_update_usernames_and_ttys_get_truncated() {
+        let long_tty = "a".repeat(Outmp::MAX_TTY_NAME_LEN + 10);
+        let long_user_id = "b".repeat(Outmp::MAX_USER_ID_LEN + 10);
+
+        let user_entry = WhodUserEntry::new(
+            long_tty.clone(),
+            long_user_id.clone(),
+            Utc.with_ymd_and_hms(2024, 6, 1, 10, 0, 0).unwrap(),
+            Duration::minutes(5),
+        );
+
+        let whoent = Whoent::try_from(user_entry.clone()).expect("Conversion to Whoent failed");
+        let converted_back =
+            WhodUserEntry::try_from(whoent).expect("Conversion from Whoent failed");
+
+        assert_eq!(
+            converted_back.tty,
+            long_tty[..Outmp::MAX_TTY_NAME_LEN].to_string()
+        );
+        assert_eq!(
+            converted_back.user_id,
+            long_user_id[..Outmp::MAX_USER_ID_LEN].to_string()
+        );
     }
 }
