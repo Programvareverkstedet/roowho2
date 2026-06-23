@@ -42,6 +42,24 @@ pub async fn rwhod_packet_receiver_task(
             Ok(status_update) => {
                 tracing::debug!("Processed whod packet from {src}: {:?}", status_update);
 
+                if status_update.boot_time > status_update.sendtime {
+                    tracing::warn!(
+                        "Received whod packet from {src} with boot time {} after send time {}",
+                        status_update.boot_time,
+                        status_update.sendtime
+                    );
+                }
+
+                if let Some(recvtime) = status_update.recvtime
+                    && recvtime < status_update.sendtime
+                {
+                    tracing::warn!(
+                        "Received whod packet from {src} with recv time {} before send time {}",
+                        recvtime,
+                        status_update.sendtime
+                    );
+                }
+
                 let mut store = whod_status_store.write().await;
                 store.insert(status_update.hostname.clone(), status_update);
             }
