@@ -236,6 +236,85 @@ impl Whod {
 /// All values are multiplied by 100.
 pub type LoadAverage = (i32, i32, i32);
 
+// NOTE: the original rwhod protocol uses 32-bit integers for timestamps,
+//       which will cause overflow issues after 2038-01-19. To mitigate this,
+//       we decode timestamps by looking at the time the packet was received,
+//       comparing it to the current time or the time the packet was received,
+//       and ensuring any overflowed timestamps are corrected accordingly.
+const RWHOD_TIMESTAMP_CORRECTION_WINDOW: i64 = 0x40000000_i64;
+const RWHOD_TIMESTAMP_WRAP_INCREMENT: i64 = 0x70000000_i64 + 0x70000000_i64 + 0x20000000_i64;
+
+fn decode_rwhod_timestamp(raw: i32, correction: i64) -> Result<DateTime<Utc>, String> {
+    DateTime::from_timestamp_secs(i64::from(raw) + correction).ok_or(format!(
+        "Invalid timestamp: {} with correction {}",
+        raw, correction
+    ))
+}
+
+fn rwhod_time_correction(now: DateTime<Utc>, recvtime: i32) -> i64 {
+    let delta = now.timestamp() - i64::from(recvtime);
+
+    if delta <= RWHOD_TIMESTAMP_CORRECTION_WINDOW {
+        return 0;
+    }
+
+    let wraps = (delta - RWHOD_TIMESTAMP_CORRECTION_WINDOW - 1)
+        .div_euclid(RWHOD_TIMESTAMP_WRAP_INCREMENT)
+        + 1;
+
+    wraps * RWHOD_TIMESTAMP_WRAP_INCREMENT
+}
+
+fn decode_rwhod_timestamp_not_after(
+    raw: i32,
+    base_correction: i64,
+    upper_bound: DateTime<Utc>,
+) -> Result<DateTime<Utc>, String> {
+    let upper_bound = upper_bound.timestamp();
+
+    for offset in [1_i64, 0, -1] {
+        let correction = base_correction + offset * RWHOD_TIMESTAMP_WRAP_INCREMENT;
+        let candidate = i64::from(raw) + correction;
+        if candidate <= upper_bound {
+            return DateTime::from_timestamp_secs(candidate).ok_or(format!(
+                "Invalid timestamp: {} with correction {}",
+                raw, correction
+            ));
+        }
+    }
+
+    decode_rwhod_timestamp(raw, base_correction - RWHOD_TIMESTAMP_WRAP_INCREMENT)
+}
+
+fn decode_rwhod_timestamp_near_time(
+    raw: i32,
+    time: DateTime<Utc>,
+) -> Result<DateTime<Utc>, String> {
+    let base_correction = rwhod_time_correction(time, raw);
+    let mut best_candidate = None;
+
+    for offset in [1_i64, 0, -1] {
+        let correction = base_correction + offset * RWHOD_TIMESTAMP_WRAP_INCREMENT;
+        let candidate = i64::from(raw) + correction;
+        let distance = (time.timestamp() - candidate).abs();
+
+        match best_candidate {
+            Some((best_distance, _, _)) if best_distance <= distance => {}
+            _ => best_candidate = Some((distance, candidate, correction)),
+        }
+    }
+
+    let (_, candidate, correction) = best_candidate.expect("candidate list should not be empty");
+    DateTime::from_timestamp_secs(candidate).ok_or(format!(
+        "Invalid timestamp: {} with correction {}",
+        raw, correction
+    ))
+}
+
+fn encode_rwhod_timestamp(timestamp: DateTime<Utc>) -> i32 {
+    timestamp.timestamp() as i32
+}
+
 /// High-level representation of a rwhod status update.
 ///
 /// This struct is intended for easier use in Rust code, with proper types and dynamic arrays.
@@ -339,9 +418,8 @@ impl TryFrom<Whoent> for WhodUserEntry {
         let user_id = String::from_utf8(value.we_utmp.out_name[..user_id_end].to_vec())
             .map_err(|e| format!("Invalid UTF-8 in user ID: {}", e))?;
 
-        let login_time = DateTime::from_timestamp_secs(value.we_utmp.out_time as i64).ok_or(
-            format!("Invalid login time timestamp: {}", value.we_utmp.out_time),
-        )?;
+        let now = Utc::now();
+        let login_time = decode_rwhod_timestamp_near_time(value.we_utmp.out_time, now)?;
 
         Ok(WhodUserEntry {
             tty,
@@ -363,20 +441,28 @@ impl TryFrom<Whod> for WhodStatusUpdate {
             ));
         }
 
-        let sendtime = DateTime::from_timestamp_secs(value.wd_sendtime as i64).ok_or(format!(
-            "Invalid send time timestamp: {}",
-            value.wd_sendtime
-        ))?;
+        let now = Utc::now();
+        let recvtime_correction = rwhod_time_correction(now, value.wd_recvtime);
 
         let recvtime = if value.wd_recvtime == 0 {
             None
         } else {
-            Some(
-                DateTime::from_timestamp_secs(value.wd_recvtime as i64).ok_or(format!(
-                    "Invalid receive time timestamp: {}",
-                    value.wd_recvtime
-                ))?,
-            )
+            Some(decode_rwhod_timestamp(
+                value.wd_recvtime,
+                recvtime_correction,
+            )?)
+        };
+
+        let recvtime_upper_bound = recvtime.unwrap_or(now);
+
+        let sendtime = if recvtime.is_some() {
+            decode_rwhod_timestamp_not_after(
+                value.wd_sendtime,
+                recvtime_correction,
+                recvtime_upper_bound,
+            )?
+        } else {
+            decode_rwhod_timestamp_near_time(value.wd_sendtime, now)?
         };
 
         let hostname_end = value
@@ -387,17 +473,37 @@ impl TryFrom<Whod> for WhodStatusUpdate {
         let hostname = String::from_utf8(value.wd_hostname[..hostname_end].to_vec())
             .map_err(|e| format!("Invalid UTF-8 in hostname: {}", e))?;
 
-        let boot_time = DateTime::from_timestamp_secs(value.wd_boottime as i64).ok_or(format!(
-            "Invalid boot time timestamp: {}",
-            value.wd_boottime
-        ))?;
+        let boot_time = if recvtime.is_some() {
+            decode_rwhod_timestamp_not_after(value.wd_boottime, recvtime_correction, sendtime)?
+        } else {
+            decode_rwhod_timestamp_not_after(
+                value.wd_boottime,
+                rwhod_time_correction(sendtime, value.wd_boottime),
+                sendtime,
+            )?
+        };
 
         let users = value
             .wd_we
             .iter()
             .take_while(|whoent| !whoent.is_zeroed())
-            .cloned()
-            .map(WhodUserEntry::try_from)
+            .map(|whoent| {
+                let mut user = WhodUserEntry::try_from(whoent.clone())?;
+                user.login_time = if recvtime.is_some() {
+                    decode_rwhod_timestamp_not_after(
+                        whoent.we_utmp.out_time,
+                        recvtime_correction,
+                        recvtime_upper_bound,
+                    )?
+                } else {
+                    decode_rwhod_timestamp_not_after(
+                        whoent.we_utmp.out_time,
+                        rwhod_time_correction(sendtime, whoent.we_utmp.out_time),
+                        sendtime,
+                    )?
+                };
+                Ok(user)
+            })
             .collect::<Result<Vec<WhodUserEntry>, String>>()?;
 
         Ok(WhodStatusUpdate {
@@ -425,10 +531,7 @@ impl TryFrom<WhodUserEntry> for Whoent {
         let user_id_len = user_id_bytes.len().min(Outmp::MAX_USER_ID_LEN);
         out_name[..user_id_len].copy_from_slice(&user_id_bytes[..user_id_len]);
 
-        let out_time = value
-            .login_time
-            .timestamp()
-            .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        let out_time = encode_rwhod_timestamp(value.login_time);
 
         let we_idle = value
             .idle_time
@@ -455,19 +558,9 @@ impl TryFrom<WhodStatusUpdate> for Whod {
         let hostname_len = hostname_bytes.len().min(Whod::MAX_HOSTNAME_LEN);
         wd_hostname[..hostname_len].copy_from_slice(&hostname_bytes[..hostname_len]);
 
-        let wd_sendtime = value
-            .sendtime
-            .timestamp()
-            .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-
-        let wd_recvtime = value.recvtime.map_or(0, |dt| {
-            dt.timestamp().clamp(i32::MIN as i64, i32::MAX as i64) as i32
-        });
-
-        let wd_boottime = value
-            .boot_time
-            .timestamp()
-            .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        let wd_sendtime = encode_rwhod_timestamp(value.sendtime);
+        let wd_recvtime = value.recvtime.map_or(0, encode_rwhod_timestamp);
+        let wd_boottime = encode_rwhod_timestamp(value.boot_time);
 
         let wd_we = value
             .users
@@ -732,6 +825,111 @@ mod tests {
         assert_eq!(
             converted_back.user_id,
             long_user_id[..Outmp::MAX_USER_ID_LEN].to_string()
+        );
+    }
+
+    #[test]
+    fn test_rwhod_timestamp_correction_for_received_packets() {
+        let now = Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap();
+        let corrected_recvtime = now - chrono::Duration::days(1);
+        let raw_recvtime = corrected_recvtime.timestamp() as i32;
+        let correction = rwhod_time_correction(now, raw_recvtime);
+
+        assert_eq!(correction, 1i64 << 32);
+        assert_eq!(
+            decode_rwhod_timestamp(raw_recvtime, correction).unwrap(),
+            corrected_recvtime
+        );
+    }
+
+    #[test]
+    fn test_whod_status_update_roundtrip_corrects_wrapped_timestamps() {
+        let original = WhodStatusUpdate::new(
+            Utc.with_ymd_and_hms(2044, 12, 31, 23, 0, 0).unwrap(),
+            Some(Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap()),
+            "testhost".to_string(),
+            (25, 20, 18),
+            Utc.with_ymd_and_hms(2044, 12, 30, 0, 0, 0).unwrap(),
+            vec![WhodUserEntry::new(
+                "tty1".to_string(),
+                "user".to_string(),
+                Utc.with_ymd_and_hms(2044, 12, 31, 22, 0, 0).unwrap(),
+                Duration::seconds(60),
+            )],
+        );
+
+        let whod = Whod::try_from(original.clone()).expect("Conversion to Whod failed");
+        let converted = WhodStatusUpdate::try_from(whod).expect("Conversion from Whod failed");
+
+        assert_eq!(converted, original);
+    }
+
+    #[test]
+    fn test_whod_status_update_roundtrip_sendtime_before_wrap_recvtime_after_wrap() {
+        let original = WhodStatusUpdate::new(
+            Utc.with_ymd_and_hms(2038, 1, 19, 3, 13, 0).unwrap(),
+            Some(Utc.with_ymd_and_hms(2038, 1, 19, 3, 14, 30).unwrap()),
+            "testhost".to_string(),
+            (25, 20, 18),
+            Utc.with_ymd_and_hms(2038, 1, 18, 0, 0, 0).unwrap(),
+            vec![WhodUserEntry::new(
+                "tty1".to_string(),
+                "user".to_string(),
+                Utc.with_ymd_and_hms(2038, 1, 19, 3, 12, 0).unwrap(),
+                Duration::seconds(60),
+            )],
+        );
+
+        let whod = Whod::try_from(original.clone()).expect("Conversion to Whod failed");
+        let converted = WhodStatusUpdate::try_from(whod).expect("Conversion from Whod failed");
+
+        assert_eq!(converted, original);
+    }
+
+    #[test]
+    fn test_whod_status_update_roundtrip_corrects_wrapped_timestamps_without_recvtime() {
+        let original = WhodStatusUpdate::new(
+            Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap(),
+            None,
+            "testhost".to_string(),
+            (25, 20, 18),
+            Utc.with_ymd_and_hms(2044, 12, 30, 0, 0, 0).unwrap(),
+            vec![WhodUserEntry::new(
+                "tty1".to_string(),
+                "user".to_string(),
+                Utc.with_ymd_and_hms(2044, 12, 31, 22, 0, 0).unwrap(),
+                Duration::seconds(60),
+            )],
+        );
+
+        let whod = Whod::try_from(original.clone()).expect("Conversion to Whod failed");
+        let converted = WhodStatusUpdate::try_from(whod).expect("Conversion from Whod failed");
+
+        assert_eq!(converted, original);
+    }
+
+    #[test]
+    fn test_whod_user_entry_roundtrip_corrects_wrapped_timestamp() {
+        let original = WhodUserEntry::new(
+            "tty1".to_string(),
+            "user".to_string(),
+            Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap(),
+            Duration::seconds(60),
+        );
+
+        let whoent = Whoent::try_from(original.clone()).expect("Conversion to Whoent failed");
+        let converted_back =
+            WhodUserEntry::try_from(whoent).expect("Conversion from Whoent failed");
+
+        assert_eq!(converted_back, original);
+    }
+
+    #[test]
+    fn test_encode_rwhod_timestamp_wraps_like_i32_cast() {
+        let timestamp = Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap();
+        assert_eq!(
+            encode_rwhod_timestamp(timestamp),
+            timestamp.timestamp() as i32
         );
     }
 }
