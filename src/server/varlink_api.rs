@@ -25,6 +25,7 @@ pub trait VarlinkRwhodClientProxy {
 
     async fn ruptime(
         &mut self,
+        all: bool,
     ) -> zlink::Result<Result<VarlinkRuptimeResponse, VarlinkRwhodClientError>>;
 }
 
@@ -38,7 +39,10 @@ pub enum VarlinkRwhodClientRequest {
     },
 
     #[serde(rename = "no.ntnu.pvv.roowho2.rwhod.Ruptime")]
-    Ruptime,
+    Ruptime {
+        /// Count all users, even those that have been idle for a long time.
+        all: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -140,29 +144,35 @@ impl VarlinkRoowhoo2ClientServer {
 }
 
 impl VarlinkRoowhoo2ClientServer {
-    // TODO: handle 'all' parameter
-    async fn handle_rwho_request(&self, _all: bool) -> VarlinkRwhoResponse {
-        tracing::debug!(all = _all, "Handling Rwho request");
+    async fn handle_rwho_request(&self, all: bool) -> VarlinkRwhoResponse {
+        tracing::debug!(all, "Handling Rwho request");
         let store = self.whod_status_store.read().await;
 
         let mut all_user_entries = Vec::with_capacity(store.len());
         for status_update in store.values() {
-            all_user_entries.extend_from_slice(
-                &status_update
+            all_user_entries.extend(
+                status_update
                     .users
                     .iter()
-                    .map(|user| (status_update.hostname.clone(), user.clone()))
-                    .collect::<Vec<(String, WhodUserEntry)>>(),
+                    .filter(|user| all || user.idle_time < chrono::Duration::hours(1))
+                    .cloned()
+                    .map(|user| (status_update.hostname.clone(), user)),
             );
         }
 
         all_user_entries
     }
 
-    async fn handle_ruptime_request(&self) -> VarlinkRuptimeResponse {
-        tracing::debug!("Handling Ruptime request");
+    async fn handle_ruptime_request(&self, all: bool) -> VarlinkRuptimeResponse {
+        tracing::debug!(all, "Handling Ruptime request");
         let store = self.whod_status_store.read().await;
-        store.values().cloned().collect()
+        store
+            .values()
+            .filter(|status_update| {
+                all || chrono::Utc::now() - status_update.sendtime < chrono::Duration::hours(1)
+            })
+            .cloned()
+            .collect()
     }
 
     async fn handle_finger_request(
@@ -263,20 +273,24 @@ impl zlink::Service<zlink::unix::Stream> for VarlinkRoowhoo2ClientServer {
                     Default::default(),
                 )
             }
-            VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Ruptime) => {
-                let result =
-                    match timeout(Duration::from_secs(2), self.handle_ruptime_request()).await {
-                        Ok(response) => response,
-                        Err(_) => {
-                            tracing::error!("Ruptime request timed out after 2 seconds");
-                            return (
-                                MethodReply::Error(VarlinkReplyError::Rwhod(
-                                    VarlinkRwhodClientError::TimedOut,
-                                )),
-                                Default::default(),
-                            );
-                        }
-                    };
+            VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Ruptime { all }) => {
+                let result = match timeout(
+                    Duration::from_secs(2),
+                    self.handle_ruptime_request(*all),
+                )
+                .await
+                {
+                    Ok(response) => response,
+                    Err(_) => {
+                        tracing::error!("Ruptime request timed out after 2 seconds");
+                        return (
+                            MethodReply::Error(VarlinkReplyError::Rwhod(
+                                VarlinkRwhodClientError::TimedOut,
+                            )),
+                            Default::default(),
+                        );
+                    }
+                };
 
                 (
                     MethodReply::Single(Some(VarlinkReply::Rwhod(

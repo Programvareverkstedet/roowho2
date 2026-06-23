@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("Failed to connect to rwhod server");
 
     let mut reply = conn
-        .ruptime()
+        .ruptime(args.all)
         .await
         .context("Failed to send rwho request")?
         .map_err(|e| anyhow::anyhow!("Server returned an error for rwho request: {:?}", e))?;
