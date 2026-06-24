@@ -5,7 +5,7 @@ use roowho2_lib::{
     proto::finger_protocol::FingerResponseUserEntry,
     server::{
         fingerd::{FingerRequestInfo, FingerRequestNetworking},
-        varlink_api::VarlinkFingerClientProxy,
+        varlink_api::{VarlinkFingerClientError, VarlinkFingerClientProxy},
     },
 };
 
@@ -196,7 +196,17 @@ async fn main() -> anyhow::Result<()> {
         )
         .await
         .context("Failed to send finger request")?
-        .map_err(|e| anyhow::anyhow!("Server returned an error for finger request: {:?}", e))?;
+        .map_err(|e| match e {
+            VarlinkFingerClientError::Disabled => {
+                anyhow::anyhow!("The fingerd service is disabled on the server")
+            }
+            VarlinkFingerClientError::TimedOut => {
+                anyhow::anyhow!("The fingerd service timed out while processing the request")
+            }
+            VarlinkFingerClientError::InvalidRequest => {
+                anyhow::anyhow!("The fingerd service could not process the request, please check the logs or report the error to your system administrators")
+            }
+        })?;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&reply).unwrap());

@@ -3,7 +3,10 @@ use chrono::{Duration, Utc};
 use clap::{CommandFactory, Parser};
 use clap_complete::{Shell, generate};
 
-use roowho2_lib::{proto::WhodStatusUpdate, server::varlink_api::VarlinkRwhodClientProxy};
+use roowho2_lib::{
+    proto::WhodStatusUpdate,
+    server::varlink_api::{VarlinkRwhodClientError, VarlinkRwhodClientProxy},
+};
 
 /// Show host status of local machines.
 ///
@@ -70,7 +73,17 @@ async fn main() -> anyhow::Result<()> {
         .ruptime(args.all)
         .await
         .context("Failed to send rwho request")?
-        .map_err(|e| anyhow::anyhow!("Server returned an error for rwho request: {:?}", e))?;
+        .map_err(|e| match e {
+            VarlinkRwhodClientError::Disabled => {
+                anyhow::anyhow!("The rwhod service is disabled on the server")
+            }
+            VarlinkRwhodClientError::TimedOut => {
+                anyhow::anyhow!("The rwhod service timed out while processing the request")
+            }
+            VarlinkRwhodClientError::InvalidRequest => {
+                anyhow::anyhow!("The rwhod service could not process the request, please check the logs or report the error to your system administrators")
+            }
+        })?;
 
     sort_entries(&mut reply, args.load, args.time, args.users, args.reverse);
 
