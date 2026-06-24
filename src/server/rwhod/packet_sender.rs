@@ -9,7 +9,10 @@ use tokio::{
     time::{Duration as TokioDuration, interval},
 };
 
-use crate::{proto::Whod, server::rwhod::rwhod_status::generate_rwhod_status_update};
+use crate::{
+    proto::Whod,
+    server::{ignore_list::IgnoreList, rwhod::rwhod_status::generate_rwhod_status_update},
+};
 
 /// Default port for rwhod communication.
 pub const RWHOD_BROADCAST_PORT: u16 = 513;
@@ -100,13 +103,14 @@ pub async fn send_rwhod_packet_to_interface(
 pub async fn rwhod_packet_sender_task(
     socket: Arc<UdpSocket>,
     interfaces: Vec<RwhodSendTarget>,
+    ignore_list: Option<IgnoreList>,
 ) -> anyhow::Result<()> {
     let mut interval = interval(TokioDuration::from_secs(60));
 
     loop {
         interval.tick().await;
 
-        let status_update = generate_rwhod_status_update()?;
+        let status_update = generate_rwhod_status_update(ignore_list.as_ref())?;
 
         tracing::debug!("Generated rwhod packet: {:?}", status_update);
 

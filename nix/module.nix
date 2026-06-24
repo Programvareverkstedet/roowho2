@@ -22,11 +22,39 @@ in {
               default = true;
             };
 
+            ignore_list_path = lib.mkOption {
+              type = lib.types.nullOr lib.types.path;
+              default = null;
+              example = lib.literalExpression ''
+                pkgs.writeText "rwhod-ignore-list" '''
+                  # Ignore the following users from rwhod
+                  user:user1
+                  user:user2
+                  uid:1001
+                '''
+              '';
+              description = "Path to the ignore list for users that should be hidden from rwhod.";
+            };
+
             # TODO: allow configuring socket config
           };
           fingerd = {
             enable = lib.mkEnableOption "the fingerd service" // {
               default = true;
+            };
+
+            ignore_list_path = lib.mkOption {
+              type = lib.types.nullOr lib.types.path;
+              default = null;
+              example = lib.literalExpression ''
+                pkgs.writeText "rwhod-ignore-list" '''
+                  # Ignore the following users from rwhod
+                  user:user1
+                  user:user2
+                  uid:1001
+                '''
+              '';
+              description = "Path to the ignore list for users that should be hidden from fingerd.";
             };
 
             # TODO: allow configuring socket config
@@ -115,7 +143,7 @@ in {
         RuntimeDirectory = "roowho2/root-mnt";
         RuntimeDirectoryMode = "0700";
         RootDirectory = "/run/roowho2/root-mnt";
-        BindReadOnlyPaths = [
+        BindReadOnlyPaths = lib.filter (x: x != null) ([
           builtins.storeDir
           "/etc"
 
@@ -130,7 +158,12 @@ in {
 
           # NOTE: finger needs access to stat tty devices
           "/dev"
-        ];
+
+        ] ++ lib.optionals cfg.settings.rwhod.enable [
+          cfg.settings.rwhod.ignore_list_path
+        ] ++ lib.optionals cfg.settings.fingerd.enable [
+          cfg.settings.fingerd.ignore_list_path
+        ]);
 
         UMask = "0077";
       };

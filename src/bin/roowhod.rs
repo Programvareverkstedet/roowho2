@@ -14,6 +14,7 @@ use tracing_subscriber::layer::SubscriberExt;
 
 use roowho2_lib::server::{
     config::{DEFAULT_CONFIG_PATH, LogLevel},
+    ignore_list::IgnoreList,
     rwhod::{RwhodStatusStore, rwhod_packet_receiver_task, rwhod_packet_sender_task},
     varlink_api::varlink_client_server_task,
 };
@@ -59,6 +60,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(subscriber)
         .context("Failed to set global default tracing subscriber")?;
 
+    let rwhod_ignore_list = IgnoreList::load_optional(config.rwhod.ignore_list_path.as_deref())?;
+    let finger_ignore_list = IgnoreList::load_optional(config.fingerd.ignore_list_path.as_deref())?;
+
     let fd_map: HashMap<String, OwnedFd> =
         HashMap::from_iter(sd_notify::listen_fds_with_names()?.map(|(fd_num, name)| {
             (
@@ -96,7 +100,11 @@ async fn main() -> anyhow::Result<()> {
             })
             .context("RWHOD server is enabled, but socket fd not provided by systemd")??;
 
-        join_set.spawn(rwhod_server(socket, whod_status_store.clone()));
+        join_set.spawn(rwhod_server(
+            socket,
+            whod_status_store.clone(),
+            rwhod_ignore_list.clone(),
+        ));
     } else {
         tracing::debug!("RWHOD server is disabled in configuration");
     }
@@ -108,6 +116,7 @@ async fn main() -> anyhow::Result<()> {
             .try_clone()
             .context("Failed to clone RWHOD client-server socket fd")?,
         whod_status_store.clone(),
+        finger_ignore_list,
         client_server_token,
     ));
 
@@ -127,12 +136,12 @@ async fn ctrl_c_handler() -> anyhow::Result<()> {
 async fn rwhod_server(
     socket: UdpSocket,
     whod_status_store: RwhodStatusStore,
+    ignore_list: Option<IgnoreList>,
 ) -> anyhow::Result<()> {
     let socket = Arc::new(socket);
 
     let interfaces = roowho2_lib::server::rwhod::determine_relevant_interfaces()?;
-    let sender_task = rwhod_packet_sender_task(socket.clone(), interfaces);
-
+    let sender_task = rwhod_packet_sender_task(socket.clone(), interfaces, ignore_list);
     let receiver_task = rwhod_packet_receiver_task(socket.clone(), whod_status_store);
 
     tokio::select! {
@@ -146,6 +155,7 @@ async fn rwhod_server(
 async fn client_server(
     socket_fd: OwnedFd,
     whod_status_store: RwhodStatusStore,
+    finger_ignore_list: Option<IgnoreList>,
     startup_token: CancellationToken,
 ) -> anyhow::Result<()> {
     // SAFETY: see above
@@ -153,7 +163,8 @@ async fn client_server(
         unsafe { std::os::unix::net::UnixListener::from_raw_fd(socket_fd.as_raw_fd()) };
     std_socket.set_nonblocking(true)?;
     let zlink_listener = zlink::unix::Listener::try_from(OwnedFd::from(std_socket))?;
-    let client_server_task = varlink_client_server_task(zlink_listener, whod_status_store);
+    let client_server_task =
+        varlink_client_server_task(zlink_listener, whod_status_store, finger_ignore_list);
 
     startup_token.cancel();
 

@@ -10,6 +10,7 @@ use crate::{
     proto::{WhodStatusUpdate, WhodUserEntry, finger_protocol::FingerResponseUserEntry},
     server::{
         fingerd::{self, FingerRequestInfo, FingerRequestNetworking, finger_utmp_users},
+        ignore_list::IgnoreList,
         rwhod::RwhodStatusStore,
     },
 };
@@ -135,11 +136,18 @@ pub enum VarlinkReplyError {
 #[derive(Debug, Clone)]
 pub struct VarlinkRoowhoo2ClientServer {
     whod_status_store: RwhodStatusStore,
+    finger_ignore_list: Option<IgnoreList>,
 }
 
 impl VarlinkRoowhoo2ClientServer {
-    pub fn new(whod_status_store: RwhodStatusStore) -> Self {
-        Self { whod_status_store }
+    pub fn new(
+        whod_status_store: RwhodStatusStore,
+        finger_ignore_list: Option<IgnoreList>,
+    ) -> Self {
+        Self {
+            whod_status_store,
+            finger_ignore_list,
+        }
     }
 }
 
@@ -194,10 +202,15 @@ impl VarlinkRoowhoo2ClientServer {
             Some(usernames) => usernames
                 .into_iter()
                 .flat_map::<Vec<_>, _>(|username| {
-                    fingerd::search_for_user(&username, match_fullnames, &request_info)
-                        .into_iter()
-                        .map(|res| (username.clone(), res))
-                        .collect()
+                    fingerd::search_for_user(
+                        &username,
+                        match_fullnames,
+                        &request_info,
+                        self.finger_ignore_list.as_ref(),
+                    )
+                    .into_iter()
+                    .map(|res| (username.clone(), res))
+                    .collect()
                 })
                 .dedup_by(|a, b| match (&a.1, &b.1) {
                     (Ok(user_a), Ok(user_b)) => user_a.username == user_b.username,
@@ -217,7 +230,7 @@ impl VarlinkRoowhoo2ClientServer {
                 .map(Box::new)
                 .map(FingerResponseUserEntry::Structured)
                 .collect(),
-            None => finger_utmp_users(&request_info)
+            None => finger_utmp_users(&request_info, self.finger_ignore_list.as_ref())
                 .into_iter()
                 .filter_map(|res| match res {
                     Ok(user_info) => Some(user_info),
@@ -346,8 +359,9 @@ impl zlink::Service<zlink::unix::Stream> for VarlinkRoowhoo2ClientServer {
 pub async fn varlink_client_server_task(
     socket: zlink::unix::Listener,
     whod_status_store: RwhodStatusStore,
+    finger_ignore_list: Option<IgnoreList>,
 ) -> anyhow::Result<()> {
-    let service = VarlinkRoowhoo2ClientServer::new(whod_status_store);
+    let service = VarlinkRoowhoo2ClientServer::new(whod_status_store, finger_ignore_list);
 
     let server = zlink::Server::new(socket, service);
 

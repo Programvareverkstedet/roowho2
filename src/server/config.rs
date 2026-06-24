@@ -1,4 +1,4 @@
-use std::net::SocketAddrV4;
+use std::{net::SocketAddrV4, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +13,9 @@ pub struct Config {
 
     /// Configuration for the rwhod server.
     pub rwhod: RwhodConfig,
+
+    /// Configuration for the fingerd server.
+    pub fingerd: FingerdConfig,
 
     /// Path to the Unix domain socket for client-server communication.
     ///
@@ -33,6 +36,9 @@ pub struct RwhodConfig {
     /// Enable or disable the rwhod server functionality.
     pub enable: bool,
 
+    /// Path to the ignore list for users that should be hidden from rwhod.
+    pub ignore_list_path: Option<PathBuf>,
+
     /// Network interfaces to listen on (e.g., ["eth0", "wlan0"]).
     ///
     /// If left as `None`, the server will automatically determine relevant interfaces.
@@ -44,4 +50,13 @@ pub struct RwhodConfig {
     ///
     /// If left as `None`, the server will automatically determine broadcast addresses for the selected interfaces.
     pub broadcast_addresses: Option<Vec<SocketAddrV4>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FingerdConfig {
+    /// Enable or disable the fingerd server functionality.
+    pub enable: bool,
+
+    /// Path to the ignore list for users that should be hidden from fingerd.
+    pub ignore_list_path: Option<PathBuf>,
 }

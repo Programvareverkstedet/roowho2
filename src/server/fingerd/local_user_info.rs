@@ -12,14 +12,18 @@ use uucore::utmpx::{Utmpx, UtmpxRecord};
 
 use crate::{
     proto::finger_protocol::{FingerResponseStructuredUserEntry, FingerResponseUserSession},
-    server::fingerd::{FingerRequestInfo, local_email},
+    server::{
+        fingerd::{FingerRequestInfo, local_email},
+        ignore_list::IgnoreList,
+    },
 };
 
 /// Search for users whose username or full name contains the search string.
 pub fn search_for_user(
     search_string: &str,
     match_fullnames: bool,
-    _request_info: &FingerRequestInfo,
+    request_info: &FingerRequestInfo,
+    ignore_list: Option<&IgnoreList>,
 ) -> Vec<anyhow::Result<FingerResponseStructuredUserEntry>> {
     (unsafe { all_users() })
         .filter_map(|user| {
@@ -51,10 +55,14 @@ pub fn search_for_user(
             )
             .to_string();
 
+            if ignore_list.is_some_and(|ignore_list| ignore_list.ignores_uid(user.uid.as_raw())) {
+                return None;
+            }
+
             let matches_username = username.contains(search_string);
             let matches_fullname = match_fullnames && full_name.contains(search_string);
             if matches_username || matches_fullname {
-                match get_local_user(&username, None) {
+                match get_local_user(&username, None, request_info, ignore_list) {
                     Ok(Some(user_entry)) => Some(Ok(user_entry)),
                     Ok(None) => None, // User exists but has .nofinger, skip
                     Err(err) => Some(Err(err)),
@@ -68,13 +76,19 @@ pub fn search_for_user(
 
 /// Retrieve information about all users currently logged in, based on utmpx records.
 pub fn finger_utmp_users(
-    _request_info: &FingerRequestInfo,
+    request_info: &FingerRequestInfo,
+    ignore_list: Option<&IgnoreList>,
 ) -> Vec<anyhow::Result<FingerResponseStructuredUserEntry>> {
     Utmpx::iter_all_records()
         .filter(|entry| entry.is_user_process())
         .into_group_map_by(|entry| entry.user())
         .into_iter()
-        .map(|(username, records)| get_local_user(&username, Some(records)))
+        .filter(|(username, _)| {
+            !ignore_list.is_some_and(|ignore_list| ignore_list.ignores_username(username))
+        })
+        .map(|(username, records)| {
+            get_local_user(&username, Some(records), request_info, ignore_list)
+        })
         .filter_map(|result| match result {
             Ok(Some(user_entry)) => Some(Ok(user_entry)),
             Ok(None) => None, // User has .nofinger, skip
@@ -113,6 +127,8 @@ fn read_file_content_if_exists(path: &Path) -> anyhow::Result<Option<String>> {
 fn get_local_user(
     username: &str,
     utmp_records: Option<Vec<UtmpxRecord>>,
+    _request_info: &FingerRequestInfo,
+    ignore_list: Option<&IgnoreList>,
 ) -> anyhow::Result<Option<FingerResponseStructuredUserEntry>> {
     tracing::trace!(
         "Retrieving local user information for username: {}",
@@ -130,6 +146,10 @@ fn get_local_user(
             ));
         }
     };
+
+    if ignore_list.is_some_and(|ignore_list| ignore_list.ignores_uid(user_entry.uid.as_raw())) {
+        return Ok(None);
+    }
 
     let nofinger_path = user_entry.dir.join(".nofinger");
     if nofinger_path.exists() {
@@ -249,7 +269,16 @@ mod tests {
 
     #[test]
     fn test_finger_root() {
-        let user_entry = get_local_user("root", None).unwrap().unwrap();
+        let user_entry = get_local_user(
+            "root",
+            None,
+            &FingerRequestInfo::Long {
+                prevent_files: false,
+            },
+            None,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(user_entry.username, "root");
     }
 
