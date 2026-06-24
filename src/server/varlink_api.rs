@@ -182,12 +182,18 @@ impl VarlinkRoowhoo2ClientServer {
     async fn handle_ruptime_request(&self, all: bool) -> VarlinkRuptimeResponse {
         tracing::debug!(all, "Handling Ruptime request");
         let store = self.whod_status_store.read().await;
+
         store
             .values()
-            .filter(|status_update| {
-                all || chrono::Utc::now() - status_update.sendtime < chrono::Duration::hours(1)
-            })
             .cloned()
+            .map(|mut status_update| {
+                if !all {
+                    status_update
+                        .users
+                        .retain(|user| user.idle_time < chrono::Duration::hours(1));
+                }
+                status_update
+            })
             .collect()
     }
 

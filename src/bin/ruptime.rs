@@ -96,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
     //     }
     } else {
         for entry in &reply {
-            let line = old_format_machine_entry(args.all, entry);
+            let line = old_format_machine_entry(entry);
             println!("{}", line);
         }
     }
@@ -138,7 +138,7 @@ fn sort_entries(
     });
 }
 
-fn old_format_machine_entry(all: bool, entry: &WhodStatusUpdate) -> String {
+fn old_format_machine_entry(entry: &WhodStatusUpdate) -> String {
     let time_since_last_ping = Utc::now() - entry.sendtime;
     let is_up = time_since_last_ping <= Duration::minutes(11);
 
@@ -155,15 +155,7 @@ fn old_format_machine_entry(all: bool, entry: &WhodStatusUpdate) -> String {
         format!("    {:2}:{:02}", hours, minutes)
     };
 
-    let user_count = if all {
-        entry.users.len()
-    } else {
-        entry
-            .users
-            .iter()
-            .filter(|user| user.idle_time < Duration::hours(1))
-            .count()
-    };
+    let user_count = entry.users.len();
 
     format!(
         "{:<12.12} {} {},  {:4} user{}  load {:>4.2}, {:>4.2}, {:>4.2}",
