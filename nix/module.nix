@@ -47,7 +47,7 @@ in {
               type = lib.types.nullOr lib.types.path;
               default = null;
               example = lib.literalExpression ''
-                pkgs.writeText "rwhod-ignore-list" '''
+                pkgs.writeText "fingerd-ignore-list" '''
                   # Ignore the following users from rwhod
                   user:user1
                   user:user2
