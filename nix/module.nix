@@ -91,7 +91,9 @@ in {
     systemd.services.roowho2 = {
       serviceConfig = {
         Type = "notify";
-        ExecStart = "${lib.getExe' cfg.package "roowhod"} --config ${format.generate "roowho2-config.toml" cfg.settings}";
+        ExecStart = let
+          configFile = format.generate "roowho2-config.toml" (lib.filterAttrsRecursive (n: v: v != null) cfg.settings);
+        in "${lib.getExe' cfg.package "roowhod"} --config ${configFile}";
         Restart = "on-failure";
         DynamicUser = true;
 
