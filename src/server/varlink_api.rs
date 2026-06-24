@@ -61,6 +61,7 @@ pub type VarlinkRuptimeResponse = Vec<WhodStatusUpdate>;
 pub enum VarlinkRwhodClientError {
     InvalidRequest,
     TimedOut,
+    Disabled,
 }
 
 // Types for 'no.ntnu.pvv.roowho2.finger'
@@ -105,6 +106,7 @@ pub type VarlinkFingerResponse = Vec<FingerResponseUserEntry>;
 pub enum VarlinkFingerClientError {
     InvalidRequest,
     TimedOut,
+    Disabled,
 }
 
 // --------------------
@@ -136,16 +138,22 @@ pub enum VarlinkReplyError {
 #[derive(Debug, Clone)]
 pub struct VarlinkRoowhoo2ClientServer {
     whod_status_store: RwhodStatusStore,
+    rwhod_enabled: bool,
+    fingerd_enabled: bool,
     finger_ignore_list: Option<IgnoreList>,
 }
 
 impl VarlinkRoowhoo2ClientServer {
     pub fn new(
         whod_status_store: RwhodStatusStore,
+        rwhod_enabled: bool,
+        fingerd_enabled: bool,
         finger_ignore_list: Option<IgnoreList>,
     ) -> Self {
         Self {
             whod_status_store,
+            rwhod_enabled,
+            fingerd_enabled,
             finger_ignore_list,
         }
     }
@@ -265,6 +273,15 @@ impl zlink::Service<zlink::unix::Stream> for VarlinkRoowhoo2ClientServer {
     > {
         match call.method() {
             VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Rwho { all }) => {
+                if !self.rwhod_enabled {
+                    return (
+                        MethodReply::Error(VarlinkReplyError::Rwhod(
+                            VarlinkRwhodClientError::Disabled,
+                        )),
+                        Default::default(),
+                    );
+                }
+
                 let result =
                     match timeout(Duration::from_secs(2), self.handle_rwho_request(*all)).await {
                         Ok(response) => response,
@@ -287,6 +304,15 @@ impl zlink::Service<zlink::unix::Stream> for VarlinkRoowhoo2ClientServer {
                 )
             }
             VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Ruptime { all }) => {
+                if !self.rwhod_enabled {
+                    return (
+                        MethodReply::Error(VarlinkReplyError::Rwhod(
+                            VarlinkRwhodClientError::Disabled,
+                        )),
+                        Default::default(),
+                    );
+                }
+
                 let result = match timeout(
                     Duration::from_secs(2),
                     self.handle_ruptime_request(*all),
@@ -320,6 +346,15 @@ impl zlink::Service<zlink::unix::Stream> for VarlinkRoowhoo2ClientServer {
                 disable_user_account_db,
                 raw_remote_output,
             }) => {
+                if !self.fingerd_enabled {
+                    return (
+                        MethodReply::Error(VarlinkReplyError::Finger(
+                            VarlinkFingerClientError::Disabled,
+                        )),
+                        Default::default(),
+                    );
+                }
+
                 let result = match timeout(
                     Duration::from_secs(2),
                     self.handle_finger_request(
@@ -359,9 +394,16 @@ impl zlink::Service<zlink::unix::Stream> for VarlinkRoowhoo2ClientServer {
 pub async fn varlink_client_server_task(
     socket: zlink::unix::Listener,
     whod_status_store: RwhodStatusStore,
+    rwhod_enabled: bool,
+    fingerd_enabled: bool,
     finger_ignore_list: Option<IgnoreList>,
 ) -> anyhow::Result<()> {
-    let service = VarlinkRoowhoo2ClientServer::new(whod_status_store, finger_ignore_list);
+    let service = VarlinkRoowhoo2ClientServer::new(
+        whod_status_store,
+        rwhod_enabled,
+        fingerd_enabled,
+        finger_ignore_list,
+    );
 
     let server = zlink::Server::new(socket, service);
 

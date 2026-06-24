@@ -116,6 +116,8 @@ async fn main() -> anyhow::Result<()> {
             .try_clone()
             .context("Failed to clone RWHOD client-server socket fd")?,
         whod_status_store.clone(),
+        config.rwhod.enable,
+        config.fingerd.enable,
         finger_ignore_list,
         client_server_token,
     ));
@@ -155,6 +157,8 @@ async fn rwhod_server(
 async fn client_server(
     socket_fd: OwnedFd,
     whod_status_store: RwhodStatusStore,
+    rwhod_enabled: bool,
+    fingerd_enabled: bool,
     finger_ignore_list: Option<IgnoreList>,
     startup_token: CancellationToken,
 ) -> anyhow::Result<()> {
@@ -163,8 +167,13 @@ async fn client_server(
         unsafe { std::os::unix::net::UnixListener::from_raw_fd(socket_fd.as_raw_fd()) };
     std_socket.set_nonblocking(true)?;
     let zlink_listener = zlink::unix::Listener::try_from(OwnedFd::from(std_socket))?;
-    let client_server_task =
-        varlink_client_server_task(zlink_listener, whod_status_store, finger_ignore_list);
+    let client_server_task = varlink_client_server_task(
+        zlink_listener,
+        whod_status_store,
+        rwhod_enabled,
+        fingerd_enabled,
+        finger_ignore_list,
+    );
 
     startup_token.cancel();
 
