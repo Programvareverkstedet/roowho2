@@ -1,8 +1,16 @@
+mod time_codec;
+
 use std::array;
 
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+
+use time_codec::{decode_rwhod_timestamp_near_time, decode_rwhod_timestamp_not_after};
+
+use crate::proto::rwhod_protocol::time_codec::{
+    decode_rwhod_timestamp, encode_rwhod_timestamp, rwhod_time_correction,
+};
 
 /// Classic C struct for utmp data for a single user session.
 ///
@@ -235,85 +243,6 @@ impl Whod {
 /// Load average representation: (5 min, 10 min, 15 min)
 /// All values are multiplied by 100.
 pub type LoadAverage = (i32, i32, i32);
-
-// NOTE: the original rwhod protocol uses 32-bit integers for timestamps,
-//       which will cause overflow issues after 2038-01-19. To mitigate this,
-//       we decode timestamps by looking at the time the packet was received,
-//       comparing it to the current time or the time the packet was received,
-//       and ensuring any overflowed timestamps are corrected accordingly.
-const RWHOD_TIMESTAMP_CORRECTION_WINDOW: i64 = 0x40000000_i64;
-const RWHOD_TIMESTAMP_WRAP_INCREMENT: i64 = 0x70000000_i64 + 0x70000000_i64 + 0x20000000_i64;
-
-fn decode_rwhod_timestamp(raw: i32, correction: i64) -> Result<DateTime<Utc>, String> {
-    DateTime::from_timestamp_secs(i64::from(raw) + correction).ok_or(format!(
-        "Invalid timestamp: {} with correction {}",
-        raw, correction
-    ))
-}
-
-fn rwhod_time_correction(now: DateTime<Utc>, recvtime: i32) -> i64 {
-    let delta = now.timestamp() - i64::from(recvtime);
-
-    if delta <= RWHOD_TIMESTAMP_CORRECTION_WINDOW {
-        return 0;
-    }
-
-    let wraps = (delta - RWHOD_TIMESTAMP_CORRECTION_WINDOW - 1)
-        .div_euclid(RWHOD_TIMESTAMP_WRAP_INCREMENT)
-        + 1;
-
-    wraps * RWHOD_TIMESTAMP_WRAP_INCREMENT
-}
-
-fn decode_rwhod_timestamp_not_after(
-    raw: i32,
-    base_correction: i64,
-    upper_bound: DateTime<Utc>,
-) -> Result<DateTime<Utc>, String> {
-    let upper_bound = upper_bound.timestamp();
-
-    for offset in [1_i64, 0, -1] {
-        let correction = base_correction + offset * RWHOD_TIMESTAMP_WRAP_INCREMENT;
-        let candidate = i64::from(raw) + correction;
-        if candidate <= upper_bound {
-            return DateTime::from_timestamp_secs(candidate).ok_or(format!(
-                "Invalid timestamp: {} with correction {}",
-                raw, correction
-            ));
-        }
-    }
-
-    decode_rwhod_timestamp(raw, base_correction - RWHOD_TIMESTAMP_WRAP_INCREMENT)
-}
-
-fn decode_rwhod_timestamp_near_time(
-    raw: i32,
-    time: DateTime<Utc>,
-) -> Result<DateTime<Utc>, String> {
-    let base_correction = rwhod_time_correction(time, raw);
-    let mut best_candidate = None;
-
-    for offset in [1_i64, 0, -1] {
-        let correction = base_correction + offset * RWHOD_TIMESTAMP_WRAP_INCREMENT;
-        let candidate = i64::from(raw) + correction;
-        let distance = (time.timestamp() - candidate).abs();
-
-        match best_candidate {
-            Some((best_distance, _, _)) if best_distance <= distance => {}
-            _ => best_candidate = Some((distance, candidate, correction)),
-        }
-    }
-
-    let (_, candidate, correction) = best_candidate.expect("candidate list should not be empty");
-    DateTime::from_timestamp_secs(candidate).ok_or(format!(
-        "Invalid timestamp: {} with correction {}",
-        raw, correction
-    ))
-}
-
-fn encode_rwhod_timestamp(timestamp: DateTime<Utc>) -> i32 {
-    timestamp.timestamp() as i32
-}
 
 /// High-level representation of a rwhod status update.
 ///
@@ -825,20 +754,6 @@ mod tests {
         assert_eq!(
             converted_back.user_id,
             long_user_id[..Outmp::MAX_USER_ID_LEN].to_string()
-        );
-    }
-
-    #[test]
-    fn test_rwhod_timestamp_correction_for_received_packets() {
-        let now = Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap();
-        let corrected_recvtime = now - chrono::Duration::days(1);
-        let raw_recvtime = corrected_recvtime.timestamp() as i32;
-        let correction = rwhod_time_correction(now, raw_recvtime);
-
-        assert_eq!(correction, 1i64 << 32);
-        assert_eq!(
-            decode_rwhod_timestamp(raw_recvtime, correction).unwrap(),
-            corrected_recvtime
         );
     }
 
