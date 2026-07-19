@@ -7,10 +7,13 @@
 use chrono::{DateTime, Utc};
 
 const RWHOD_TIMESTAMP_CORRECTION_WINDOW: i64 = 0x40000000_i64;
-const RWHOD_TIMESTAMP_WRAP_INCREMENT: i64 = 0x70000000_i64 + 0x70000000_i64 + 0x20000000_i64;
+const RWHOD_TIMESTAMP_WRAP_INCREMENT: i64 = 0x1_0000_0000_i64;
+
+const RWHOD_TIMESTAMP_FORWARD_ALLOWANCE: i64 = RWHOD_TIMESTAMP_CORRECTION_WINDOW;
 
 /// Decodes a raw rwhod timestamp (i32) into a DateTime<Utc>,
 /// adding a correction value to count for any detected overflows.
+#[allow(dead_code)]
 pub fn decode_rwhod_timestamp(raw: i32, correction: i64) -> Result<DateTime<Utc>, String> {
     DateTime::from_timestamp_secs(i64::from(raw) + correction).ok_or(format!(
         "Invalid timestamp: {} with correction {}",
@@ -20,6 +23,18 @@ pub fn decode_rwhod_timestamp(raw: i32, correction: i64) -> Result<DateTime<Utc>
 
 /// Calculates the correction value for a received rwhod timestamp (i32),
 /// based on the current time (now) and the received timestamp (recvtime).
+///
+/// If the difference between the current time and the received timestamp is
+/// above a certain threshold (`RWHOD_TIMESTAMP_CORRECTION_WINDOW`),
+/// this function attempts to determine how many times the timestamp has
+/// wrapped around and returns the appropriate additional correction value
+/// to account for the overflow.
+///
+/// This function is roughly equivalent to the logic used in the original
+/// program to handle timestamp overflows, but please consider using
+/// `decode_rwhod_timestamp_near_time` for most use cases, as it is designed
+/// to be more robust.
+#[allow(dead_code)]
 pub fn rwhod_time_correction(now: DateTime<Utc>, recvtime: i32) -> i64 {
     let delta = now.timestamp() - i64::from(recvtime);
 
@@ -27,64 +42,78 @@ pub fn rwhod_time_correction(now: DateTime<Utc>, recvtime: i32) -> i64 {
         return 0;
     }
 
-    let wraps = (delta - RWHOD_TIMESTAMP_CORRECTION_WINDOW - 1)
+    let wrap_count = (delta - RWHOD_TIMESTAMP_CORRECTION_WINDOW - 1)
         .div_euclid(RWHOD_TIMESTAMP_WRAP_INCREMENT)
         + 1;
 
-    wraps * RWHOD_TIMESTAMP_WRAP_INCREMENT
+    wrap_count * RWHOD_TIMESTAMP_WRAP_INCREMENT
 }
 
-/// Decodes a raw rwhod timestamp (i32) into a DateTime<Utc>,
-/// by adding a correction value to count for any detected overflows,
-/// while ensuring the decoded timestamp is not after the specified upper bound.
-pub fn decode_rwhod_timestamp_not_after(
+/// Decodes a raw rwhod timestamp (i32) into a DateTime<Utc> using a wrap-sized
+/// interval around the provided `time` reference.
+///
+/// You can think of this function as looking at the current timestamp and choosing
+/// the closest valid timestamp behind it for the given raw value, while also allowing
+/// it to be a certain amount of time in the future (forward allowance) to account for
+/// clock skew or other synchronization issues.
+pub fn decode_rwhod_timestamp_near_time_with_forward_allowance(
     raw: i32,
-    base_correction: i64,
-    upper_bound: DateTime<Utc>,
+    time: DateTime<Utc>,
+    forward_allowance: i64,
 ) -> Result<DateTime<Utc>, String> {
-    let upper_bound = upper_bound.timestamp();
+    debug_assert!(forward_allowance >= 0);
+    debug_assert!(forward_allowance <= RWHOD_TIMESTAMP_WRAP_INCREMENT);
 
-    for offset in [1_i64, 0, -1] {
-        let correction = base_correction + offset * RWHOD_TIMESTAMP_WRAP_INCREMENT;
-        let candidate = i64::from(raw) + correction;
-        if candidate <= upper_bound {
-            return DateTime::from_timestamp_secs(candidate).ok_or(format!(
-                "Invalid timestamp: {} with correction {}",
-                raw, correction
-            ));
-        }
-    }
+    let raw = i64::from(raw);
+    let candidate = raw
+        + (time.timestamp() + forward_allowance - raw).div_euclid(RWHOD_TIMESTAMP_WRAP_INCREMENT)
+            * RWHOD_TIMESTAMP_WRAP_INCREMENT;
 
-    decode_rwhod_timestamp(raw, base_correction - RWHOD_TIMESTAMP_WRAP_INCREMENT)
+    DateTime::from_timestamp_secs(candidate).ok_or(format!(
+        "Invalid timestamp: {} near {} with forward allowance {}",
+        raw, time, forward_allowance
+    ))
 }
 
-/// Decodes a raw rwhod timestamp (i32) into a DateTime<Utc>,
-/// by adding a correction value to count for any detected overflows.
-/// The correction value is calculated based on the provided `time` argument,
-/// choosing the timestamp closest to `time` among the possible candidates.
+/// Decodes a raw rwhod timestamp (i32) into a DateTime<Utc> using the default
+/// wrap-sized interval around the reference time.
 pub fn decode_rwhod_timestamp_near_time(
     raw: i32,
     time: DateTime<Utc>,
 ) -> Result<DateTime<Utc>, String> {
-    let base_correction = rwhod_time_correction(time, raw);
-    let mut best_candidate = None;
+    decode_rwhod_timestamp_near_time_with_forward_allowance(
+        raw,
+        time,
+        RWHOD_TIMESTAMP_FORWARD_ALLOWANCE,
+    )
+}
 
-    for offset in [1_i64, 0, -1] {
-        let correction = base_correction + offset * RWHOD_TIMESTAMP_WRAP_INCREMENT;
-        let candidate = i64::from(raw) + correction;
-        let distance = (time.timestamp() - candidate).abs();
+pub struct RwhodTimestamps {
+    pub boottime: DateTime<Utc>,
+    pub sendtime: DateTime<Utc>,
+    pub recvtime: Option<DateTime<Utc>>,
+}
 
-        match best_candidate {
-            Some((best_distance, _, _)) if best_distance <= distance => {}
-            _ => best_candidate = Some((distance, candidate, correction)),
-        }
-    }
+pub fn decode_rwhod_timestamps(
+    wd_boottime: i32,
+    wd_sendtime: i32,
+    wd_recvtime: i32,
+    now: DateTime<Utc>,
+) -> Result<RwhodTimestamps, String> {
+    let recvtime = if wd_recvtime == 0 {
+        None
+    } else {
+        Some(decode_rwhod_timestamp_near_time(wd_recvtime, now)?)
+    };
 
-    let (_, candidate, correction) = best_candidate.expect("candidate list should not be empty");
-    DateTime::from_timestamp_secs(candidate).ok_or(format!(
-        "Invalid timestamp: {} with correction {}",
-        raw, correction
-    ))
+    let sendtime = decode_rwhod_timestamp_near_time(wd_sendtime, now)?;
+    let boottime = decode_rwhod_timestamp_near_time(wd_boottime, now)?;
+
+    Ok(RwhodTimestamps {
+        boottime,
+        sendtime,
+        recvtime,
+    })
 }
 
 /// Encodes a DateTime<Utc> into a raw rwhod timestamp (i32).
@@ -94,67 +123,132 @@ pub fn encode_rwhod_timestamp(timestamp: DateTime<Utc>) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-
     use super::*;
 
     #[test]
-    fn test_rwhod_timestamp_correction_for_received_packets() {
-        let now = Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap();
-        let corrected_recvtime = now - chrono::Duration::days(1);
-        let raw_recvtime = corrected_recvtime.timestamp() as i32;
-        let correction = rwhod_time_correction(now, raw_recvtime);
+    fn test_rwhod_time_correction_no_wrap() {
+        let now = DateTime::from_timestamp(i32::MAX as i64 + 1, 0).unwrap();
+        let recvtime = i32::MAX;
+        let correction = rwhod_time_correction(now, recvtime);
 
-        assert_eq!(correction, 1i64 << 32);
+        assert_eq!(correction, 0);
+    }
+
+    #[test]
+    fn test_rwhod_time_correction_with_single_wrap() {
+        let now = DateTime::from_timestamp(i32::MAX as i64 + 2, 0).unwrap();
+        let recvtime = i32::MAX.wrapping_add(1);
+        let correction = rwhod_time_correction(now, recvtime);
+
+        assert_eq!(correction, RWHOD_TIMESTAMP_WRAP_INCREMENT * 1);
+    }
+
+    #[test]
+    fn test_rwhod_time_correction_with_multiple_wraps() {
+        let now = DateTime::from_timestamp(i32::MAX as i64 + RWHOD_TIMESTAMP_WRAP_INCREMENT + 1, 0)
+            .unwrap();
+        let recvtime = i32::MAX.wrapping_add(1);
+        let correction = rwhod_time_correction(now, recvtime);
+
+        assert_eq!(correction, RWHOD_TIMESTAMP_WRAP_INCREMENT * 2);
+    }
+
+    #[test]
+    fn test_rwhod_time_correction_with_negative_delta() {
+        let now = DateTime::from_timestamp(i32::MAX as i64 - 1, 0).unwrap();
+        let recvtime = i32::MAX;
+        let correction = rwhod_time_correction(now, recvtime);
+
+        assert_eq!(correction, 0);
+    }
+
+    #[test]
+    fn test_rwhod_time_correction_with_large_negative_delta() {
+        let now = DateTime::from_timestamp(i32::MIN as i64 - 1, 0).unwrap();
+        let recvtime = i32::MIN;
+        let correction = rwhod_time_correction(now, recvtime);
+
+        assert_eq!(correction, 0);
+    }
+
+    #[test]
+    fn test_decode_rwhod_timestamp_near_time_no_wrap() {
+        let now = DateTime::from_timestamp(i32::MAX as i64 + 1, 0).unwrap();
+        let expected = now - chrono::Duration::days(1);
+        let raw = expected.timestamp() as i32;
+
+        let decoded = decode_rwhod_timestamp_near_time(raw, now).unwrap();
+        assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn test_decode_rwhod_timestamp_near_time_with_wrap() {
+        let now = DateTime::from_timestamp(i32::MAX as i64 + RWHOD_TIMESTAMP_WRAP_INCREMENT + 1, 0)
+            .unwrap();
+        let expected = now - chrono::Duration::days(1);
+        let raw = expected.timestamp() as i32;
+
+        let decoded = decode_rwhod_timestamp_near_time(raw, now).unwrap();
+        assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn test_decode_rwhod_timestamp_near_time_with_negative_delta() {
+        let time = DateTime::from_timestamp(-(RWHOD_TIMESTAMP_WRAP_INCREMENT / 2) - 10, 0).unwrap();
+        let raw = 0;
+
+        let decoded = decode_rwhod_timestamp_near_time_with_forward_allowance(
+            raw,
+            time,
+            RWHOD_TIMESTAMP_WRAP_INCREMENT / 2,
+        )
+        .unwrap();
         assert_eq!(
-            decode_rwhod_timestamp(raw_recvtime, correction).unwrap(),
-            corrected_recvtime
+            decoded,
+            DateTime::from_timestamp(-RWHOD_TIMESTAMP_WRAP_INCREMENT, 0).unwrap()
         );
     }
 
     #[test]
-    fn test_decode_rwhod_timestamp_near_time() {
-        let now = Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap();
-        let corrected_recvtime = now - chrono::Duration::days(1);
-        let raw_recvtime = corrected_recvtime.timestamp() as i32;
+    fn test_decode_rwhod_timestamp_near_time_uses_forward_allowance() {
+        let time = DateTime::from_timestamp(i32::MAX as i64 + 1, 0).unwrap();
+        let expected = time + chrono::Duration::seconds(5);
+        let raw = expected.timestamp() as i32;
 
-        let decoded = decode_rwhod_timestamp_near_time(raw_recvtime, now).unwrap();
-        assert_eq!(decoded, corrected_recvtime);
+        let decoded =
+            decode_rwhod_timestamp_near_time_with_forward_allowance(raw, time, 5).unwrap();
+        assert_eq!(decoded, expected);
     }
 
     #[test]
-    fn test_decode_rwhod_timestamp_not_after() {
-        let now = Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap();
-        let corrected_recvtime = now - chrono::Duration::days(1);
-        let raw_recvtime = corrected_recvtime.timestamp() as i32;
-        let base_correction = rwhod_time_correction(now, raw_recvtime);
+    fn test_decode_rwhod_timestamp_near_time_small_forward_allowance_prefers_previous_wrap() {
+        let time = DateTime::from_timestamp(i32::MAX as i64 + 1, 0).unwrap();
+        let future = time + chrono::Duration::seconds(RWHOD_TIMESTAMP_WRAP_INCREMENT / 4);
+        let raw = future.timestamp() as i32;
 
-        let decoded = decode_rwhod_timestamp_not_after(raw_recvtime, base_correction, now).unwrap();
-        assert_eq!(decoded, corrected_recvtime);
-    }
-
-    #[test]
-    fn test_decode_rwhod_timestamp_not_after_prefers_latest_plausible_pre_wrap_candidate() {
-        let now = Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap();
-        let recvtime = now - chrono::Duration::minutes(1);
-        let boot_time = recvtime - chrono::Duration::days(100);
-
-        let raw_recvtime = recvtime.timestamp() as i32;
-        let raw_boot_time = boot_time.timestamp() as i32;
-        let recvtime_correction = rwhod_time_correction(now, raw_recvtime);
-
-        let decoded_boot_time =
-            decode_rwhod_timestamp_not_after(raw_boot_time, recvtime_correction, recvtime).unwrap();
-
-        assert_eq!(decoded_boot_time, boot_time);
-    }
-
-    #[test]
-    fn test_encode_rwhod_timestamp_wraps_like_i32_cast() {
-        let timestamp = Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap();
+        let decoded = decode_rwhod_timestamp_near_time_with_forward_allowance(
+            raw,
+            time,
+            RWHOD_TIMESTAMP_WRAP_INCREMENT / 10,
+        )
+        .unwrap();
         assert_eq!(
-            encode_rwhod_timestamp(timestamp),
-            timestamp.timestamp() as i32
+            decoded,
+            future - chrono::Duration::seconds(RWHOD_TIMESTAMP_WRAP_INCREMENT)
         );
+    }
+
+    #[test]
+    fn test_encode_rwhod_timestamp_no_wrap() {
+        let timestamp = DateTime::from_timestamp(i32::MAX as i64, 0).unwrap();
+        let encoded = encode_rwhod_timestamp(timestamp);
+        assert_eq!(encoded, i32::MAX);
+    }
+
+    #[test]
+    fn test_encode_rwhod_timestamp_with_wrap() {
+        let timestamp = DateTime::from_timestamp(i32::MAX as i64 + 1, 0).unwrap();
+        let encoded = encode_rwhod_timestamp(timestamp);
+        assert_eq!(encoded, i32::MIN);
     }
 }

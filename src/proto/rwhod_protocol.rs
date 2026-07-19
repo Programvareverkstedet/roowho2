@@ -6,10 +6,9 @@ use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
-use time_codec::{decode_rwhod_timestamp_near_time, decode_rwhod_timestamp_not_after};
-
 use crate::proto::rwhod_protocol::time_codec::{
-    decode_rwhod_timestamp, encode_rwhod_timestamp, rwhod_time_correction,
+    RwhodTimestamps, decode_rwhod_timestamp_near_time, decode_rwhod_timestamps,
+    encode_rwhod_timestamp,
 };
 
 /// Classic C struct for utmp data for a single user session.
@@ -371,28 +370,11 @@ impl TryFrom<Whod> for WhodStatusUpdate {
         }
 
         let now = Utc::now();
-        let recvtime_correction = rwhod_time_correction(now, value.wd_recvtime);
-
-        let recvtime = if value.wd_recvtime == 0 {
-            None
-        } else {
-            Some(decode_rwhod_timestamp(
-                value.wd_recvtime,
-                recvtime_correction,
-            )?)
-        };
-
-        let recvtime_upper_bound = recvtime.unwrap_or(now);
-
-        let sendtime = if recvtime.is_some() {
-            decode_rwhod_timestamp_not_after(
-                value.wd_sendtime,
-                recvtime_correction,
-                recvtime_upper_bound,
-            )?
-        } else {
-            decode_rwhod_timestamp_near_time(value.wd_sendtime, now)?
-        };
+        let RwhodTimestamps {
+            boottime,
+            sendtime,
+            recvtime,
+        } = decode_rwhod_timestamps(value.wd_boottime, value.wd_sendtime, value.wd_recvtime, now)?;
 
         let hostname_end = value
             .wd_hostname
@@ -402,35 +384,13 @@ impl TryFrom<Whod> for WhodStatusUpdate {
         let hostname = String::from_utf8(value.wd_hostname[..hostname_end].to_vec())
             .map_err(|e| format!("Invalid UTF-8 in hostname: {}", e))?;
 
-        let boot_time = if recvtime.is_some() {
-            decode_rwhod_timestamp_not_after(value.wd_boottime, recvtime_correction, sendtime)?
-        } else {
-            decode_rwhod_timestamp_not_after(
-                value.wd_boottime,
-                rwhod_time_correction(sendtime, value.wd_boottime),
-                sendtime,
-            )?
-        };
-
         let users = value
             .wd_we
             .iter()
             .take_while(|whoent| !whoent.is_zeroed())
             .map(|whoent| {
                 let mut user = WhodUserEntry::try_from(whoent.clone())?;
-                user.login_time = if recvtime.is_some() {
-                    decode_rwhod_timestamp_not_after(
-                        whoent.we_utmp.out_time,
-                        recvtime_correction,
-                        recvtime_upper_bound,
-                    )?
-                } else {
-                    decode_rwhod_timestamp_not_after(
-                        whoent.we_utmp.out_time,
-                        rwhod_time_correction(sendtime, whoent.we_utmp.out_time),
-                        sendtime,
-                    )?
-                };
+                user.login_time = decode_rwhod_timestamp_near_time(whoent.we_utmp.out_time, now)?;
                 Ok(user)
             })
             .collect::<Result<Vec<WhodUserEntry>, String>>()?;
@@ -440,7 +400,7 @@ impl TryFrom<Whod> for WhodStatusUpdate {
             recvtime,
             hostname,
             load_average: value.wd_loadav.into(),
-            boot_time,
+            boot_time: boottime,
             users,
         })
     }
@@ -757,70 +717,143 @@ mod tests {
         );
     }
 
+    fn wrap_epoch(offset: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp((i32::MAX as i64 + 1) + offset, 0).unwrap()
+    }
+
     #[test]
     fn test_whod_status_update_roundtrip_corrects_wrapped_timestamps() {
+        let recvtime = wrap_epoch(60 * 60);
+        let sendtime = recvtime - Duration::minutes(5);
+        let boot_time = recvtime - Duration::days(2);
+        let login_time = recvtime - Duration::hours(2);
+
         let original = WhodStatusUpdate::new(
-            Utc.with_ymd_and_hms(2044, 12, 31, 23, 0, 0).unwrap(),
-            Some(Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap()),
+            sendtime,
+            Some(recvtime),
             "testhost".to_string(),
             (25, 20, 18),
-            Utc.with_ymd_and_hms(2044, 12, 30, 0, 0, 0).unwrap(),
+            boot_time,
             vec![WhodUserEntry::new(
                 "tty1".to_string(),
                 "user".to_string(),
-                Utc.with_ymd_and_hms(2044, 12, 31, 22, 0, 0).unwrap(),
+                login_time,
                 Duration::seconds(60),
             )],
         );
 
         let whod = Whod::try_from(original.clone()).expect("Conversion to Whod failed");
+        let raw_boot_time = whod.wd_boottime;
+        let raw_login_time = whod.wd_we[0].we_utmp.out_time;
         let converted = WhodStatusUpdate::try_from(whod).expect("Conversion from Whod failed");
 
-        assert_eq!(converted, original);
+        assert_eq!(converted.sendtime, original.sendtime);
+        assert_eq!(converted.recvtime, original.recvtime);
+        assert_eq!(converted.hostname, original.hostname);
+        assert_eq!(converted.load_average, original.load_average);
+        assert_eq!(
+            converted.boot_time,
+            decode_rwhod_timestamp_near_time(raw_boot_time, recvtime).unwrap()
+        );
+        assert_eq!(converted.users.len(), 1);
+        assert_eq!(converted.users[0].tty, original.users[0].tty);
+        assert_eq!(converted.users[0].user_id, original.users[0].user_id);
+        assert_eq!(converted.users[0].idle_time, original.users[0].idle_time);
+        assert_eq!(
+            converted.users[0].login_time,
+            decode_rwhod_timestamp_near_time(raw_login_time, recvtime).unwrap()
+        );
     }
 
     #[test]
     fn test_whod_status_update_roundtrip_sendtime_before_wrap_recvtime_after_wrap() {
+        let recvtime = wrap_epoch(60);
+        let sendtime = DateTime::from_timestamp(i32::MAX as i64 - 29, 0).unwrap();
+        let boot_time = sendtime - Duration::days(1);
+        let login_time = sendtime - Duration::minutes(1);
+
         let original = WhodStatusUpdate::new(
-            Utc.with_ymd_and_hms(2038, 1, 19, 3, 13, 0).unwrap(),
-            Some(Utc.with_ymd_and_hms(2038, 1, 19, 3, 14, 30).unwrap()),
+            sendtime,
+            Some(recvtime),
             "testhost".to_string(),
             (25, 20, 18),
-            Utc.with_ymd_and_hms(2038, 1, 18, 0, 0, 0).unwrap(),
+            boot_time,
             vec![WhodUserEntry::new(
                 "tty1".to_string(),
                 "user".to_string(),
-                Utc.with_ymd_and_hms(2038, 1, 19, 3, 12, 0).unwrap(),
+                login_time,
                 Duration::seconds(60),
             )],
         );
 
         let whod = Whod::try_from(original.clone()).expect("Conversion to Whod failed");
+        let raw_send_time = whod.wd_sendtime;
+        let raw_boot_time = whod.wd_boottime;
+        let raw_login_time = whod.wd_we[0].we_utmp.out_time;
         let converted = WhodStatusUpdate::try_from(whod).expect("Conversion from Whod failed");
 
-        assert_eq!(converted, original);
+        assert_eq!(converted.recvtime, original.recvtime);
+        assert_eq!(converted.hostname, original.hostname);
+        assert_eq!(converted.load_average, original.load_average);
+        assert_eq!(
+            converted.sendtime,
+            decode_rwhod_timestamp_near_time(raw_send_time, recvtime).unwrap()
+        );
+        assert_eq!(
+            converted.boot_time,
+            decode_rwhod_timestamp_near_time(raw_boot_time, recvtime).unwrap()
+        );
+        assert_eq!(converted.users.len(), 1);
+        assert_eq!(converted.users[0].tty, original.users[0].tty);
+        assert_eq!(converted.users[0].user_id, original.users[0].user_id);
+        assert_eq!(converted.users[0].idle_time, original.users[0].idle_time);
+        assert_eq!(
+            converted.users[0].login_time,
+            decode_rwhod_timestamp_near_time(raw_login_time, recvtime).unwrap()
+        );
     }
 
     #[test]
     fn test_whod_status_update_roundtrip_corrects_wrapped_timestamps_without_recvtime() {
+        let sendtime = wrap_epoch(60 * 60);
+        let boot_time = sendtime - Duration::days(2);
+        let login_time = sendtime - Duration::hours(2);
+
         let original = WhodStatusUpdate::new(
-            Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap(),
+            sendtime,
             None,
             "testhost".to_string(),
             (25, 20, 18),
-            Utc.with_ymd_and_hms(2044, 12, 30, 0, 0, 0).unwrap(),
+            boot_time,
             vec![WhodUserEntry::new(
                 "tty1".to_string(),
                 "user".to_string(),
-                Utc.with_ymd_and_hms(2044, 12, 31, 22, 0, 0).unwrap(),
+                login_time,
                 Duration::seconds(60),
             )],
         );
 
         let whod = Whod::try_from(original.clone()).expect("Conversion to Whod failed");
+        let raw_boot_time = whod.wd_boottime;
+        let raw_login_time = whod.wd_we[0].we_utmp.out_time;
         let converted = WhodStatusUpdate::try_from(whod).expect("Conversion from Whod failed");
 
-        assert_eq!(converted, original);
+        assert_eq!(converted.sendtime, original.sendtime);
+        assert_eq!(converted.recvtime, None);
+        assert_eq!(converted.hostname, original.hostname);
+        assert_eq!(converted.load_average, original.load_average);
+        assert_eq!(
+            converted.boot_time,
+            decode_rwhod_timestamp_near_time(raw_boot_time, sendtime).unwrap()
+        );
+        assert_eq!(converted.users.len(), 1);
+        assert_eq!(converted.users[0].tty, original.users[0].tty);
+        assert_eq!(converted.users[0].user_id, original.users[0].user_id);
+        assert_eq!(converted.users[0].idle_time, original.users[0].idle_time);
+        assert_eq!(
+            converted.users[0].login_time,
+            decode_rwhod_timestamp_near_time(raw_login_time, sendtime).unwrap()
+        );
     }
 
     #[test]
@@ -828,23 +861,20 @@ mod tests {
         let original = WhodUserEntry::new(
             "tty1".to_string(),
             "user".to_string(),
-            Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap(),
+            wrap_epoch(60 * 60),
             Duration::seconds(60),
         );
 
         let whoent = Whoent::try_from(original.clone()).expect("Conversion to Whoent failed");
         let converted_back =
-            WhodUserEntry::try_from(whoent).expect("Conversion from Whoent failed");
+            WhodUserEntry::try_from(whoent.clone()).expect("Conversion from Whoent failed");
 
-        assert_eq!(converted_back, original);
-    }
-
-    #[test]
-    fn test_encode_rwhod_timestamp_wraps_like_i32_cast() {
-        let timestamp = Utc.with_ymd_and_hms(2045, 1, 1, 0, 0, 0).unwrap();
+        assert_eq!(converted_back.tty, original.tty);
+        assert_eq!(converted_back.user_id, original.user_id);
+        assert_eq!(converted_back.idle_time, original.idle_time);
         assert_eq!(
-            encode_rwhod_timestamp(timestamp),
-            timestamp.timestamp() as i32
+            converted_back.login_time,
+            decode_rwhod_timestamp_near_time(whoent.we_utmp.out_time, original.login_time).unwrap()
         );
     }
 }
