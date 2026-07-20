@@ -36,6 +36,21 @@ in {
               description = "Path to the ignore list for users that should be hidden from rwhod.";
             };
 
+            interfaces = lib.mkOption {
+              type = with lib.types; nullOr (listOf str);
+              default = null;
+              example = [ "eth0" "wlan0" ];
+              description = ''
+                List of network interfaces to broadcast rwhod packets on.
+
+                If set to `null`, rwhod will try to autodetect all reasonable interfaces
+                to broadcast on, and use all of them.
+
+                If set to an empty list, rwhod will not broadcast on any interfaces,
+                and will only listen for incoming packets.
+              '';
+            };
+
             socketConfig = lib.mkOption {
               type = utils.systemdUtils.unitOptions.unitOption;
               default = { };

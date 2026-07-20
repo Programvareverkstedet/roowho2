@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
     path::PathBuf,
     sync::Arc,
@@ -104,6 +104,7 @@ async fn main() -> anyhow::Result<()> {
             socket,
             whod_status_store.clone(),
             rwhod_ignore_list.clone(),
+            config.rwhod.interfaces.clone(),
         ));
     } else {
         tracing::debug!("RWHOD server is disabled in configuration");
@@ -139,10 +140,12 @@ async fn rwhod_server(
     socket: UdpSocket,
     whod_status_store: RwhodStatusStore,
     ignore_list: Option<IgnoreList>,
+    allowed_interfaces: Option<HashSet<String>>,
 ) -> anyhow::Result<()> {
     let socket = Arc::new(socket);
 
-    let interfaces = roowho2_lib::server::rwhod::determine_relevant_interfaces()?;
+    let interfaces =
+        roowho2_lib::server::rwhod::determine_relevant_interfaces(allowed_interfaces.as_ref())?;
     let sender_task = rwhod_packet_sender_task(socket.clone(), interfaces, ignore_list);
     let receiver_task = rwhod_packet_receiver_task(socket.clone(), whod_status_store);
 

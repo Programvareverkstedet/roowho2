@@ -29,7 +29,12 @@ pub struct RwhodSendTarget {
 }
 
 /// Find all networks network interfaces suitable for rwhod communication.
-pub fn determine_relevant_interfaces() -> anyhow::Result<Vec<RwhodSendTarget>> {
+///
+/// If `allowed_interfaces` is `Some`, only interfaces whose name is contained
+/// in it are considered; otherwise all suitable interfaces are returned.
+pub fn determine_relevant_interfaces(
+    allowed_interfaces: Option<&HashSet<String>>,
+) -> anyhow::Result<Vec<RwhodSendTarget>> {
     getifaddrs().map_err(|e| e.into()).map(|ifaces| {
         ifaces
             // interface must be up
@@ -39,6 +44,11 @@ pub fn determine_relevant_interfaces() -> anyhow::Result<Vec<RwhodSendTarget>> {
                 iface
                     .flags
                     .intersects(InterfaceFlags::IFF_BROADCAST | InterfaceFlags::IFF_POINTOPOINT)
+            })
+            // interface must be in the configured allowlist, if any
+            .filter(|iface| {
+                allowed_interfaces
+                    .is_none_or(|allowed| allowed.contains(iface.interface_name.as_str()))
             })
             .filter_map(|iface| {
                 let neighbor_addr = if iface.flags.contains(InterfaceFlags::IFF_BROADCAST) {
@@ -137,9 +147,16 @@ mod tests {
 
     #[test]
     fn test_determine_relevant_interfaces() {
-        let interfaces = determine_relevant_interfaces().unwrap();
+        let interfaces = determine_relevant_interfaces(None).unwrap();
         for interface in interfaces {
             println!("Interface: {} Address: {}", interface.name, interface.addr);
         }
+    }
+
+    #[test]
+    fn test_determine_relevant_interfaces_with_allowlist_excludes_unlisted() {
+        let allowed = HashSet::from(["definitely-not-a-real-interface".to_string()]);
+        let interfaces = determine_relevant_interfaces(Some(&allowed)).unwrap();
+        assert!(interfaces.is_empty());
     }
 }

@@ -1,4 +1,4 @@
-use std::{net::SocketAddrV4, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -39,17 +39,10 @@ pub struct RwhodConfig {
     /// Path to the ignore list for users that should be hidden from rwhod.
     pub ignore_list_path: Option<PathBuf>,
 
-    /// Network interfaces to listen on (e.g., ["eth0", "wlan0"]).
+    /// Network interfaces to send rwhod packets on (e.g., ["eth0", "wlan0"]).
     ///
-    /// If left as `None`, the server will automatically determine relevant interfaces.
-    ///
-    /// Note that if `broadcast_addresses` is specified, this field is ignored.
-    pub interfaces: Option<Vec<String>>,
-
-    /// Broadcast addresses to send rwhod packets to.
-    ///
-    /// If left as `None`, the server will automatically determine broadcast addresses for the selected interfaces.
-    pub broadcast_addresses: Option<Vec<SocketAddrV4>>,
+    /// If left as `None`, the server will send on all relevant interfaces it can find.
+    pub interfaces: Option<HashSet<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
