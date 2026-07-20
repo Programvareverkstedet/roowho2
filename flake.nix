@@ -114,6 +114,8 @@
       filteredSource = pkgs.runCommandLocal "filtered-source" { } ''
         ln -s ${src} $out
       '';
+
+      netkit-rwho = pkgs.callPackage ./nix/packages/netkit-rwho.nix { };
     });
 
     checks = forAllSystems (system: pkgs: _: {
