@@ -134,6 +134,26 @@ nixpkgs.lib.nixosSystem {
               enable = true;
               defaultEditor = true;
             };
+
+            systemd.sockets.fingerd = {
+              wantedBy = [ "sockets.target" ];
+              socketConfig = {
+                ListenStream = 79;
+                Accept = true;
+              };
+            };
+
+            systemd.services."fingerd@" = {
+              serviceConfig = {
+                Type = "simple";
+                StandardInput = "socket";
+                StandardOutput = "socket";
+                StandardError = "journal";
+                ExecStart = "${pkgs.bsd-fingerd}/bin/fingerd -L ${lib.getExe pkgs.bsd-finger} -t 60";
+              };
+            };
+
+            networking.firewall.allowedTCPPorts = [ 79 ];
           };
         };
       in {
