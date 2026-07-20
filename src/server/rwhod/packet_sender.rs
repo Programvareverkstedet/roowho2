@@ -114,8 +114,9 @@ pub async fn rwhod_packet_sender_task(
     socket: Arc<UdpSocket>,
     interfaces: Vec<RwhodSendTarget>,
     ignore_list: Option<IgnoreList>,
+    send_interval: TokioDuration,
 ) -> anyhow::Result<()> {
-    let mut interval = interval(TokioDuration::from_secs(60));
+    let mut interval = interval(send_interval);
 
     loop {
         interval.tick().await;

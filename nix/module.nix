@@ -61,6 +61,14 @@ in {
               '';
             };
 
+            send_interval_seconds = lib.mkOption {
+              type = lib.types.ints.positive;
+              default = 60;
+              description = ''
+                Interval between rwhod status packet broadcasts.
+              '';
+            };
+
             ignoreUsers = lib.mkOption {
               type = with lib.types; listOf (either str ints.unsigned);
               default = [ ];

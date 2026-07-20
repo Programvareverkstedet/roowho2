@@ -105,6 +105,7 @@ async fn main() -> anyhow::Result<()> {
             whod_status_store.clone(),
             rwhod_ignore_list.clone(),
             config.rwhod.interfaces.clone(),
+            config.rwhod.send_interval_seconds,
         ));
     } else {
         tracing::debug!("RWHOD server is disabled in configuration");
@@ -136,17 +137,34 @@ async fn ctrl_c_handler() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to listen for Ctrl-C: {}", e))
 }
 
+/// Default interval, in seconds, between rwhod status packet broadcasts.
+const DEFAULT_SEND_INTERVAL_SECONDS: u64 = 60;
+
 async fn rwhod_server(
     socket: UdpSocket,
     whod_status_store: RwhodStatusStore,
     ignore_list: Option<IgnoreList>,
     allowed_interfaces: Option<HashSet<String>>,
+    send_interval_seconds: Option<u64>,
 ) -> anyhow::Result<()> {
     let socket = Arc::new(socket);
 
     let interfaces =
         roowho2_lib::server::rwhod::determine_relevant_interfaces(allowed_interfaces.as_ref())?;
-    let sender_task = rwhod_packet_sender_task(socket.clone(), interfaces, ignore_list);
+    let send_interval_seconds = match send_interval_seconds {
+        Some(0) => {
+            tracing::warn!(
+                "rwhod.send_interval_seconds is set to 0, remapping to default value of {} seconds",
+                DEFAULT_SEND_INTERVAL_SECONDS
+            );
+            DEFAULT_SEND_INTERVAL_SECONDS
+        }
+        Some(seconds) => seconds,
+        None => DEFAULT_SEND_INTERVAL_SECONDS,
+    };
+    let send_interval = std::time::Duration::from_secs(send_interval_seconds);
+    let sender_task =
+        rwhod_packet_sender_task(socket.clone(), interfaces, ignore_list, send_interval);
     let receiver_task = rwhod_packet_receiver_task(socket.clone(), whod_status_store);
 
     tokio::select! {

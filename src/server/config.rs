@@ -43,6 +43,11 @@ pub struct RwhodConfig {
     ///
     /// If left as `None`, the server will send on all relevant interfaces it can find.
     pub interfaces: Option<HashSet<String>>,
+
+    /// Interval between rwhod status packet broadcasts.
+    ///
+    /// If left as `None`, defaults to 60 seconds.
+    pub send_interval_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
