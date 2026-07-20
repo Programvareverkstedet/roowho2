@@ -32,7 +32,7 @@ pub struct Args {
     uptime_timeout: u32,
 
     /// Sort by load average.
-    #[arg(long, short, conflicts_with = "time", conflicts_with = "users")]
+    #[arg(long, short, group = "sort_mode")]
     load: bool,
 
     /// Reverses the sort order.
@@ -40,11 +40,11 @@ pub struct Args {
     reverse: bool,
 
     /// Sort by uptime.
-    #[arg(long, short, conflicts_with = "load", conflicts_with = "users")]
+    #[arg(long, short, group = "sort_mode")]
     time: bool,
 
     /// Sort by number of users.
-    #[arg(long, short, conflicts_with = "load", conflicts_with = "time")]
+    #[arg(long, short, group = "sort_mode")]
     users: bool,
 
     /// Print the output with the old formatting
@@ -52,11 +52,7 @@ pub struct Args {
     old: bool,
 
     /// Output in JSON format
-    #[arg(
-        long,
-        short,
-        conflicts_with_all = ["load", "reverse", "time", "users"]
-    )]
+    #[arg(long, short, conflicts_with_all = ["sort_mode", "reverse"])]
     json: bool,
 
     /// Generate shell completion scripts for the specified shell
