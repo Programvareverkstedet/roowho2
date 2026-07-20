@@ -52,7 +52,11 @@ pub struct Args {
     old: bool,
 
     /// Output in JSON format
-    #[arg(long, short)]
+    #[arg(
+        long,
+        short,
+        conflicts_with_all = ["load", "reverse", "time", "users"]
+    )]
     json: bool,
 
     /// Generate shell completion scripts for the specified shell
