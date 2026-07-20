@@ -1,4 +1,4 @@
-{ config, pkgs, lib, ... }:
+{ config, pkgs, lib, utils, ... }:
 let
   cfg = config.services.roowho2;
   format = pkgs.formats.toml { };
@@ -36,8 +36,23 @@ in {
               description = "Path to the ignore list for users that should be hidden from rwhod.";
             };
 
-            # TODO: allow configuring socket config
+            socketConfig = lib.mkOption {
+              type = utils.systemdUtils.unitOptions.unitOption;
+              default = { };
+              description = ''
+                Config for the systemd socket's `[Socket]` section.
+
+                See {manpage}`systemd.socket(5)` for details.
+              '';
+              example = {
+                IPAddressDeny = "any";
+                IPAddressAllow = [
+                  "127.0.0.1"
+                ];
+              };
+            };
           };
+
           fingerd = {
             enable = lib.mkEnableOption "the fingerd service" // {
               default = true;
@@ -57,7 +72,36 @@ in {
               description = "Path to the ignore list for users that should be hidden from fingerd.";
             };
 
-            # TODO: allow configuring socket config
+            # enable_remote_finger = lib.mkOption {
+            #   type = lib.types.bool;
+            #   default = false;
+            #   example = true;
+            #   description = ''
+            #     Whether to allow remote finger requests.
+
+            #     If set to false, only local finger requests will be served.
+            #   '';
+            # };
+
+            # socketConfig = lib.mkOption {
+            #   type = utils.systemdUtils.unitOptions.unitOption;
+            #   default = { };
+            #   description = ''
+            #     Config for the systemd socket's `[Socket]` section.
+
+            #     See {manpage}`systemd.socket(5)` for details.
+
+            #     ::: {.note}
+            #     This is only relevant if `enableRemoteFinger` is `true`.
+            #     :::
+            #   '';
+            #   example = {
+            #     IPAddressDeny = "any";
+            #     IPAddressAllow = [
+            #       "127.0.0.1"
+            #     ];
+            #   };
+            # };
           };
         };
       };
@@ -85,14 +129,31 @@ in {
         Service = "roowho2.service";
         FileDescriptorName = "rwhod_socket";
         Broadcast = true;
-      };
+      } // cfg.settings.rwhod.socketConfig;
     };
+
+    # systemd.sockets.roowho2-fingerd = lib.mkIf cfg.settings.fingerd.enable && cfg.settings.fingerd.enableRemoteFinger {
+    #   wantedBy = [ "sockets.target" ];
+    #   description = "Roowho2 Fingerd Socket";
+    #   listenStreams = [ "0.0.0.0:79" ];
+    #   socketConfig = {
+    #     Service = "roowho2.service";
+    #     FileDescriptorName = "fingerd_socket";
+    #   } // cfg.settings.fingerd.socketConfig;
+    # };
 
     systemd.services.roowho2 = {
       serviceConfig = {
         Type = "notify";
         ExecStart = let
-          configFile = format.generate "roowho2-config.toml" (lib.filterAttrsRecursive (n: v: v != null) cfg.settings);
+          configFile = lib.pipe cfg.settings [
+            (lib.filterAttrsRecursive (n: v: v != null))
+            (settings: lib.recursiveUpdate settings {
+              rwhod = lib.removeAttrs settings.rwhod [ "socketConfig" ];
+              fingerd = lib.removeAttrs settings.fingerd [ "socketConfig" ];
+            })
+            (format.generate "roowho2-config.toml")
+          ];
         in "${lib.getExe' cfg.package "roowhod"} --config ${configFile}";
         Restart = "on-failure";
         DynamicUser = true;
