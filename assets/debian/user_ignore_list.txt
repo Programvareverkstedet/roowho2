@@ -1,0 +1,4 @@
+# # In this file, you can specify users to ignore, either by username or by UID.
+# # Example values:
+# user:alice
+# uid:1000

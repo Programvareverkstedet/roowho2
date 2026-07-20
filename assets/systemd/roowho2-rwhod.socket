@@ -1,0 +1,11 @@
+[Unit]
+Description=Roowho2 Rwhod Socket
+
+[Socket]
+FileDescriptorName=rwhod_socket
+Service=roowho2.service
+ListenDatagram=0.0.0.0:513
+Broadcast=true
+
+[Install]
+WantedBy=sockets.target

@@ -40,6 +40,10 @@ users = { version = "0.11.0", default-features = false }
 tracing-journald = "0.3.2"
 chrono-tz = "0.10.4"
 
+[dev-dependencies]
+indoc = "2.0.7"
+tempfile = "3.27.0"
+
 [features]
 default = ["systemd"]
 systemd = ["sd-notify", "uucore/feat_systemd_logind"]
@@ -89,6 +93,74 @@ strip = true
 lto = true
 codegen-units = 1
 
-[dev-dependencies]
-indoc = "2.0.7"
-tempfile = "3.27.0"
+[package.metadata.deb]
+name = "roowho2"
+priority = "optional"
+section = "net"
+depends = "$auto"
+license-file = ["LICENSE", "0"]
+maintainer = "Programvareverkstedet <projects@pvv.ntnu.no>"
+copyright = "Copyright (c) 2026, Programvareverkstedet"
+assets = [
+  [
+    "target/release/roowhod",
+    "usr/bin/roowhod",
+    "0755"
+  ],
+  [
+    "target/release/finger",
+    "usr/bin/finger",
+    "0755"
+  ],
+  [
+    "target/release/ruptime",
+    "usr/bin/ruptime",
+    "0755"
+  ],
+  [
+    "target/release/rwho",
+    "usr/bin/rwho",
+    "0755"
+  ],
+  [
+    "assets/debian/config.toml",
+    "etc/roowho2/config.toml",
+    "0644"
+  ],
+  [
+    "assets/debian/user_ignore_list.txt",
+    "etc/roowho2/rwhod-ignore-list",
+    "0644"
+  ],
+  [
+    "assets/debian/user_ignore_list.txt",
+    "etc/roowho2/fingerd-ignore-list",
+    "0644"
+  ],
+  [
+    "assets/completions/_*",
+    "usr/share/zsh/site-functions/completions/",
+    "644",
+  ],
+  [
+    "assets/completions/*.bash",
+    "usr/share/bash-completion/completions/",
+    "644",
+  ],
+  [
+    "assets/completions/*.fish",
+    "usr/share/fish/vendor_completions.d/",
+    "644",
+  ],
+  [
+    "README.md",
+    "usr/share/doc/roowho2/",
+    "644",
+  ],
+]
+maintainer-scripts = "debian/"
+systemd-units = [
+    { unit-name = "roowho2", unit-scripts = "assets/systemd", enable = true },
+    { unit-name = "roowho2-client", unit-scripts = "assets/systemd", enable = true },
+    { unit-name = "roowho2-rwhod", unit-scripts = "assets/systemd", enable = true },
+]

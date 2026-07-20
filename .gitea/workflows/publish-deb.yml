@@ -1,0 +1,77 @@
+name: "Publish Debian package"
+run-name: "Publish Debian package"
+on:
+  workflow_dispatch:
+    inputs:
+      deb_version:
+        description: "Version to publish"
+        type: string
+
+      deb_revision:
+        description: "Debian package revision"
+        type: string
+        default: "1"
+        required: true
+
+      rust_toolchain:
+        description: "Whether to build the package with stable rust"
+        type: choice
+        options:
+          - stable
+          - nightly
+          - beta
+        default: stable
+
+env:
+  BINSTALL_DISABLE_TELEMETRY: 'true'
+
+# TODO: dynamic matrix builds when...
+#       https://github.com/go-gitea/gitea/issues/25179
+jobs:
+  build-deb:
+    strategy:
+      matrix:
+        os: [
+          debian-trixie,
+          debian-bookworm,
+          # ubuntu-resolute,
+          ubuntu-noble,
+          ubuntu-jammy,
+        ]
+    name: Build and publish for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cargo-bins/cargo-binstall@main
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+            toolchain: ${{ inputs.rust_toolchain }}
+
+      - name: Install cargo-deb
+        run: cargo binstall -y cargo-deb
+
+      - name: Build deb package
+        env:
+          CREATE_DEB_DEBUG: "1"
+        run: |
+          CREATE_DEB_ARGS=(
+            --deb-revision "${{ inputs.deb_revision }}"
+          )
+
+          if [ "${{ inputs.deb_version }}" != "" ]; then
+            CREATE_DEB_ARGS+=("--deb-version" "${{ inputs.deb_version }}")
+          fi
+
+          ./scripts/create-deb.sh "${CREATE_DEB_ARGS[@]}"
+
+      - name: Upload deb package artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: roowho2-deb-${{ matrix.os }}-${{ gitea.sha }}
+          path: target/debian/*.deb
+          if-no-files-found: error
+          retention-days: 30
+          # Already compressed
+          compression: 0

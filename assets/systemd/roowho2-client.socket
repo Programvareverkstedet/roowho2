@@ -1,0 +1,10 @@
+[Unit]
+Description=Roowho2 Client Communication Socket
+
+[Socket]
+FileDescriptorName=client_socket
+Service=roowho2.service
+ListenStream=/run/roowho2/roowho2.varlink
+
+[Install]
+WantedBy=sockets.target

@@ -55,6 +55,7 @@
       nativeBuildInputs = with pkgs; [
         toolchain
         cargo-edit
+        cargo-deb
       ] ++ (lib.optionals stdenv.buildPlatform.isLinux [
         systemdLibs
       ]);
