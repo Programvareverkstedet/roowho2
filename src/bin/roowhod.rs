@@ -3,6 +3,7 @@ use std::{
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::Context;
@@ -20,9 +21,6 @@ use roowho2_lib::server::{
     },
     varlink_api::varlink_client_server_task,
 };
-
-/// Default maximum number of distinct hosts to keep rwhod status records for at the same time.
-const DEFAULT_MAX_STATUS_ENTRIES: usize = 4096;
 
 #[derive(Parser)]
 #[command(
@@ -80,19 +78,9 @@ async fn main() -> anyhow::Result<()> {
 
     let mut join_set = tokio::task::JoinSet::new();
 
-    let max_status_entries = match config.rwhod.max_status_entries {
-        Some(0) => {
-            tracing::warn!(
-                "rwhod.max_status_entries is set to 0, remapping to default value of {}",
-                DEFAULT_MAX_STATUS_ENTRIES
-            );
-            DEFAULT_MAX_STATUS_ENTRIES
-        }
-        Some(max_status_entries) => max_status_entries,
-        None => DEFAULT_MAX_STATUS_ENTRIES,
-    };
-    let whod_status_store: RwhodStatusStore =
-        Arc::new(RwLock::new(RwhodStatusRegistry::new(max_status_entries)));
+    let whod_status_store: RwhodStatusStore = Arc::new(RwLock::new(RwhodStatusRegistry::new(
+        config.rwhod.max_status_entries(),
+    )));
 
     let client_server_token = CancellationToken::new();
     let client_server_token_ = client_server_token.clone();
@@ -122,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
             whod_status_store.clone(),
             rwhod_ignore_list.clone(),
             config.rwhod.interfaces.clone(),
-            config.rwhod.send_interval_seconds,
+            config.rwhod.send_interval(),
         ));
     } else {
         tracing::debug!("RWHOD server is disabled in configuration");
@@ -154,32 +142,17 @@ async fn ctrl_c_handler() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to listen for Ctrl-C: {}", e))
 }
 
-/// Default interval, in seconds, between rwhod status packet broadcasts.
-const DEFAULT_SEND_INTERVAL_SECONDS: u64 = 60;
-
 async fn rwhod_server(
     socket: UdpSocket,
     whod_status_store: RwhodStatusStore,
     ignore_list: Option<IgnoreList>,
     allowed_interfaces: Option<HashSet<String>>,
-    send_interval_seconds: Option<u64>,
+    send_interval: Duration,
 ) -> anyhow::Result<()> {
     let socket = Arc::new(socket);
 
     let interfaces =
         roowho2_lib::server::rwhod::determine_relevant_interfaces(allowed_interfaces.as_ref())?;
-    let send_interval_seconds = match send_interval_seconds {
-        Some(0) => {
-            tracing::warn!(
-                "rwhod.send_interval_seconds is set to 0, remapping to default value of {} seconds",
-                DEFAULT_SEND_INTERVAL_SECONDS
-            );
-            DEFAULT_SEND_INTERVAL_SECONDS
-        }
-        Some(seconds) => seconds,
-        None => DEFAULT_SEND_INTERVAL_SECONDS,
-    };
-    let send_interval = std::time::Duration::from_secs(send_interval_seconds);
     let sender_task =
         rwhod_packet_sender_task(socket.clone(), interfaces, ignore_list, send_interval);
     let receiver_task = rwhod_packet_receiver_task(socket.clone(), whod_status_store);

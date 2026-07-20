@@ -1,10 +1,16 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/roowho2/config.toml";
 
 pub const DEFAULT_CLIENT_SOCKET_PATH: &str = "/run/roowho2/server_client.sock";
+
+/// Default interval between rwhod status packet broadcasts.
+const DEFAULT_SEND_INTERVAL_SECONDS: u64 = 60;
+
+/// Default maximum number of distinct hosts to keep rwhod status records for at the same time.
+const DEFAULT_MAX_STATUS_ENTRIES: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
@@ -55,6 +61,40 @@ pub struct RwhodConfig {
     ///
     /// If left as `None`, defaults to 4096.
     pub max_status_entries: Option<usize>,
+}
+
+impl RwhodConfig {
+    /// Resolves [`Self::send_interval_seconds`] into a concrete interval.
+    pub fn send_interval(&self) -> Duration {
+        let seconds = match self.send_interval_seconds {
+            Some(0) => {
+                tracing::warn!(
+                    "rwhod.send_interval_seconds is set to 0, remapping to default value of {} seconds",
+                    DEFAULT_SEND_INTERVAL_SECONDS
+                );
+                DEFAULT_SEND_INTERVAL_SECONDS
+            }
+            Some(seconds) => seconds,
+            None => DEFAULT_SEND_INTERVAL_SECONDS,
+        };
+
+        Duration::from_secs(seconds)
+    }
+
+    /// Resolves [`Self::max_status_entries`] into a concrete limit.
+    pub fn max_status_entries(&self) -> usize {
+        match self.max_status_entries {
+            Some(0) => {
+                tracing::warn!(
+                    "rwhod.max_status_entries is set to 0, remapping to default value of {}",
+                    DEFAULT_MAX_STATUS_ENTRIES
+                );
+                DEFAULT_MAX_STATUS_ENTRIES
+            }
+            Some(max_status_entries) => max_status_entries,
+            None => DEFAULT_MAX_STATUS_ENTRIES,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
