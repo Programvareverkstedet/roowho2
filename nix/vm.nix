@@ -21,9 +21,9 @@ nixpkgs.lib.nixosSystem {
       virtualisation.graphics = false;
 
       virtualisation.memorySize = 256;
-      virtualisation.vlans = [ 1 ];
 
       users.users.alice.extraGroups = [ "wheel" ];
+      users.users.bob.uid = 1001;
 
       services.getty.autologinUser = "alice";
 
@@ -49,6 +49,9 @@ nixpkgs.lib.nixosSystem {
       services.roowho2 = {
         enable = true;
         settings.log_level = "trace";
+        settings.fingerd.ignoreUsers = [
+          "bob"
+        ];
       };
 
       programs.vim = {

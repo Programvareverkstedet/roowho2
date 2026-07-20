@@ -33,7 +33,17 @@ in {
                   uid:1001
                 '''
               '';
-              description = "Path to the ignore list for users that should be hidden from rwhod.";
+              description = ''
+                List of users/UIDs to ignore from the local machine both when
+                broadcasting packets and when responding to local rwho/ruptime requests.
+
+                If set to `null`, rwhod will not ignore any users, and will serve all users on the system.
+
+                ::: {.note}
+                This option is also available as `services.roowho2.settings.rwhod.ignoreUsers`,
+                which is a more convenient way to specify the ignore list from within a NixOS module.
+                :::
+              '';
             };
 
             interfaces = lib.mkOption {
@@ -48,6 +58,18 @@ in {
 
                 If set to an empty list, rwhod will not broadcast on any interfaces,
                 and will only listen for incoming packets.
+              '';
+            };
+
+            ignoreUsers = lib.mkOption {
+              type = with lib.types; listOf (either str ints.unsigned);
+              default = [ ];
+              example = [ "user1" 1002 ];
+              description = ''
+                List of users/UIDs to ignore from the local machine both when
+                broadcasting packets and when responding to local rwho/ruptime requests.
+
+                If left empty, rwhod will not ignore any users, and will serve all users on the system.
               '';
             };
 
@@ -84,7 +106,29 @@ in {
                   uid:1001
                 '''
               '';
-              description = "Path to the ignore list for users that should be hidden from fingerd.";
+              description = ''
+                List of users/UIDs to ignore from the local machine when responding to
+                local or remote finger requests.
+
+                If set to `null`, fingerd will not ignore any users, and will serve all users on the system.
+
+                ::: {.note}
+                This option is also available as `services.roowho2.settings.fingerd.ignoreUsers`,
+                which is a more convenient way to specify the ignore list from within a NixOS module.
+                :::
+              '';
+            };
+
+            ignoreUsers = lib.mkOption {
+              type = with lib.types; listOf (either str ints.unsigned);
+              default = [ ];
+              example = [ "user1" 1002 ];
+              description = ''
+                List of users/UIDs to ignore from the local machine when responding to
+                local or remote finger requests.
+
+                If left empty, fingerd will not ignore any users, and will serve all users on the system.
+              '';
             };
 
             # enable_remote_finger = lib.mkOption {
@@ -126,6 +170,73 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.settings.rwhod.enable || cfg.settings.fingerd.enable;
+        message = "At least one of `services.roowho2.settings.rwhod.enable` or `services.roowho2.settings.fingerd.enable` must be true.";
+      }
+      {
+        assertion =
+          cfg.settings.rwhod.ignoreUsers == [ ]
+          || cfg.settings.rwhod.ignore_list_path == "/etc/roowho2/rwhod-ignore-list";
+        message = "Cannot set both `services.roowho2.settings.rwhod.ignoreUsers` and `services.roowho2.settings.rwhod.ignore_list_path`.";
+      }
+      {
+        assertion =
+          cfg.settings.fingerd.ignoreUsers == [ ]
+          || cfg.settings.fingerd.ignore_list_path == "/etc/roowho2/fingerd-ignore-list";
+        message = "Cannot set both `services.roowho2.settings.fingerd.ignoreUsers` and `services.roowho2.settings.fingerd.ignore_list_path`.";
+      }
+    ];
+
+    services.roowho2.settings = {
+      rwhod.ignore_list_path =
+        lib.mkIf
+          (cfg.settings.rwhod.enable && cfg.settings.rwhod.ignoreUsers != [ ])
+          "/etc/roowho2/rwhod-ignore-list";
+      fingerd.ignore_list_path =
+        lib.mkIf
+          (cfg.settings.fingerd.enable && cfg.settings.fingerd.ignoreUsers != [ ])
+          "/etc/roowho2/fingerd-ignore-list";
+    };
+
+    environment.etc = let
+      generateIgnoreList = let
+        nameToUidMapping = lib.pipe config.users.users [
+          (lib.filterAttrs (_: user: user.uid != null))
+          (lib.mapAttrsToList (name: user: { name = name; value = user.uid; }))
+          lib.listToAttrs
+        ];
+
+        uidToNameMapping = lib.pipe config.users.users [
+          (lib.filterAttrs (_: user: user.uid != null))
+          (lib.mapAttrsToList (name: user: { name = toString user.uid; value = name; }))
+          lib.listToAttrs
+        ];
+      in users: lib.pipe users [
+        # Prefer UIDs for users we know the UID
+        (map (user: if builtins.isString user
+          then (nameToUidMapping.${user} or user)
+          else user))
+
+        # Then render back to strings
+        (map (user:
+           if builtins.isString user
+             then "user:${user}"
+             else "uid:${toString user} # ${uidToNameMapping.${toString user} or "unknown"}"))
+
+        (lib.concatStringsSep "\n")
+      ];
+    in {
+      "roowho2/rwhod-ignore-list" = lib.mkIf (cfg.settings.rwhod.enable && cfg.settings.rwhod.ignoreUsers != [ ]) {
+        text = generateIgnoreList cfg.settings.rwhod.ignoreUsers;
+      };
+
+      "roowho2/fingerd-ignore-list" = lib.mkIf (cfg.settings.fingerd.enable && cfg.settings.fingerd.ignoreUsers != [ ]) {
+        text = generateIgnoreList cfg.settings.fingerd.ignoreUsers;
+      };
+    };
+
     systemd.sockets.roowho2-client = {
       wantedBy = [ "sockets.target" ];
       description = "Roowho2 Client Communication Socket";
@@ -163,15 +274,17 @@ in {
         ExecStart = let
           configFile = lib.pipe cfg.settings [
             (lib.filterAttrsRecursive (n: v: v != null))
-            (settings: lib.recursiveUpdate settings {
-              rwhod = lib.removeAttrs settings.rwhod [ "socketConfig" ];
-              fingerd = lib.removeAttrs settings.fingerd [ "socketConfig" ];
+            (settings: settings // {
+              rwhod = lib.removeAttrs settings.rwhod [ "socketConfig" "ignoreUsers" ];
+              fingerd = lib.removeAttrs settings.fingerd [ "socketConfig" "ignoreUsers" ];
             })
             (format.generate "roowho2-config.toml")
           ];
         in "${lib.getExe' cfg.package "roowhod"} --config ${configFile}";
         Restart = "on-failure";
         DynamicUser = true;
+
+        ConfigurationDirectory = [ "roowho2" ];
 
         # NOTE: roowho2 might at some point need to read from home directories
         #       to get user settings, so let's keep these disabled for now.
