@@ -15,9 +15,14 @@ use tracing_subscriber::layer::SubscriberExt;
 use roowho2_lib::server::{
     config::{DEFAULT_CONFIG_PATH, LogLevel},
     ignore_list::IgnoreList,
-    rwhod::{RwhodStatusStore, rwhod_packet_receiver_task, rwhod_packet_sender_task},
+    rwhod::{
+        RwhodStatusRegistry, RwhodStatusStore, rwhod_packet_receiver_task, rwhod_packet_sender_task,
+    },
     varlink_api::varlink_client_server_task,
 };
+
+/// Default maximum number of distinct hosts to keep rwhod status records for at the same time.
+const DEFAULT_MAX_STATUS_ENTRIES: usize = 4096;
 
 #[derive(Parser)]
 #[command(
@@ -75,7 +80,19 @@ async fn main() -> anyhow::Result<()> {
 
     let mut join_set = tokio::task::JoinSet::new();
 
-    let whod_status_store = Arc::new(RwLock::new(HashMap::new()));
+    let max_status_entries = match config.rwhod.max_status_entries {
+        Some(0) => {
+            tracing::warn!(
+                "rwhod.max_status_entries is set to 0, remapping to default value of {}",
+                DEFAULT_MAX_STATUS_ENTRIES
+            );
+            DEFAULT_MAX_STATUS_ENTRIES
+        }
+        Some(max_status_entries) => max_status_entries,
+        None => DEFAULT_MAX_STATUS_ENTRIES,
+    };
+    let whod_status_store: RwhodStatusStore =
+        Arc::new(RwLock::new(RwhodStatusRegistry::new(max_status_entries)));
 
     let client_server_token = CancellationToken::new();
     let client_server_token_ = client_server_token.clone();

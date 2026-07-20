@@ -48,6 +48,13 @@ pub struct RwhodConfig {
     ///
     /// If left as `None`, defaults to 60 seconds.
     pub send_interval_seconds: Option<u64>,
+
+    /// Maximum number of distinct hosts to keep rwhod status records for at
+    /// the same time. Once at capacity, the least recently updated record
+    /// is evicted to make room for a newly-seen host.
+    ///
+    /// If left as `None`, defaults to 4096.
+    pub max_status_entries: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

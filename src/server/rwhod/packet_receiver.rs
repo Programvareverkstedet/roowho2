@@ -61,7 +61,7 @@ pub async fn rwhod_packet_receiver_task(
                 }
 
                 let mut store = whod_status_store.write().await;
-                store.insert(status_update.hostname.clone(), status_update);
+                store.upsert(status_update);
             }
             Err(err) => {
                 tracing::error!("Error processing whod packet from {src}: {err}");

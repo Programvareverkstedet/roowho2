@@ -69,6 +69,16 @@ in {
               '';
             };
 
+            max_status_entries = lib.mkOption {
+              type = lib.types.ints.positive;
+              default = 4096;
+              description = ''
+                Maximum number of distinct hosts to keep rwhod status records for
+                at the same time. Once at capacity, the least recently updated
+                record is evicted to make room for a newly-seen host.
+              '';
+            };
+
             ignoreUsers = lib.mkOption {
               type = with lib.types; listOf (either str ints.unsigned);
               default = [ ];
