@@ -6,9 +6,12 @@ use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::proto::rwhod_protocol::time_codec::{
-    RwhodTimestamps, decode_rwhod_timestamp_near_time, decode_rwhod_timestamps,
-    encode_rwhod_timestamp,
+use crate::{
+    proto::rwhod_protocol::time_codec::{
+        RwhodTimestamps, decode_rwhod_timestamp_near_time, decode_rwhod_timestamps,
+        encode_rwhod_timestamp,
+    },
+    util::duration_serde,
 };
 
 /// Classic C struct for utmp data for a single user session.
@@ -256,9 +259,11 @@ pub type LoadAverage = (i32, i32, i32);
 pub struct WhodStatusUpdate {
     // NOTE: there is only one defined packet type, so we just omit it here
     /// Timestamp by sender
+    #[serde(with = "chrono::serde::ts_seconds")]
     pub sendtime: DateTime<Utc>,
 
     /// Timestamp applied by receiver
+    #[serde(with = "chrono::serde::ts_seconds_option")]
     pub recvtime: Option<DateTime<Utc>>,
 
     /// Name of the host sending the status update (max 32 characters)
@@ -268,6 +273,7 @@ pub struct WhodStatusUpdate {
     pub load_average: LoadAverage,
 
     /// Which time the system was booted
+    #[serde(with = "chrono::serde::ts_seconds")]
     pub boot_time: DateTime<Utc>,
 
     /// List of users currently logged in to the host (max 42 entries)
@@ -307,9 +313,11 @@ pub struct WhodUserEntry {
     pub user_id: String,
 
     /// Time when the user logged in
+    #[serde(with = "chrono::serde::ts_seconds")]
     pub login_time: DateTime<Utc>,
 
     /// How long since the user last typed on the TTY
+    #[serde(with = "duration_serde::duration_seconds")]
     pub idle_time: Duration,
 }
 

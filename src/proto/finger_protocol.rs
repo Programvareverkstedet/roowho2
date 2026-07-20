@@ -6,9 +6,12 @@ use std::path::PathBuf;
 use chrono::{DateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::proto::finger_protocol::{
-    classic_formatter::classic_format_finger_response_structured_user_entry,
-    parser::try_parse_structured_user_entry_from_raw_finger_response,
+use crate::{
+    proto::finger_protocol::{
+        classic_formatter::classic_format_finger_response_structured_user_entry,
+        parser::try_parse_structured_user_entry_from_raw_finger_response,
+    },
+    util::duration_serde,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,10 +246,12 @@ impl FingerResponseStructuredUserEntry {
 pub enum MailStatus {
     NoMail,
     NewMailReceived {
+        #[serde(with = "chrono::serde::ts_seconds")]
         received_time: DateTime<Utc>,
+        #[serde(with = "chrono::serde::ts_seconds")]
         unread_since: DateTime<Utc>,
     },
-    MailLastRead(DateTime<Utc>),
+    MailLastRead(#[serde(with = "chrono::serde::ts_seconds")] DateTime<Utc>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,12 +260,14 @@ pub struct FingerResponseUserSession {
     pub tty: String,
 
     /// When the user logged in and created this session
+    #[serde(with = "chrono::serde::ts_seconds")]
     pub login_time: DateTime<Utc>,
 
     /// The hostname or address of the machine from which the user is logged in, if available
     pub host: Option<String>,
 
     /// The amount of time since the use last interacted with the tty
+    #[serde(with = "duration_serde::duration_seconds_option")]
     pub idle_time: Option<TimeDelta>,
 
     /// Whether this tty is writable, and thus can receive messages via `mesg(1)`
