@@ -19,8 +19,13 @@ use roowho2_lib::{
 #[command(author = "Programvareverkstedet <projects@pvv.ntnu.no>", version)]
 pub struct Args {
     /// Print all machines responding even if no one is currently logged in
-    #[arg(long, short)]
+    #[arg(long, short, conflicts_with = "idle_timeout")]
     all: bool,
+
+    /// Only show users idle for less than this many minutes.
+    /// Cannot be used together with `--all`.
+    #[arg(long, value_name = "MINUTES", default_value_t = DEFAULT_IDLE_TIMEOUT_MINUTES)]
+    idle_timeout: u32,
 
     /// Print the output with the old formatting
     #[arg(long, short)]
@@ -36,6 +41,9 @@ pub struct Args {
     completions: Option<Shell>,
 }
 
+/// Users idle for longer than this are omitted from the output by default.
+const DEFAULT_IDLE_TIMEOUT_MINUTES: u32 = 60;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -45,12 +53,18 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let max_idle_seconds = if args.all {
+        None
+    } else {
+        Some(i64::from(args.idle_timeout) * 60)
+    };
+
     let mut conn = zlink::tokio::unix::connect("/run/roowho2/roowho2.varlink")
         .await
         .expect("Failed to connect to rwhod server");
 
     let mut reply = conn
-        .rwho(args.all)
+        .rwho(max_idle_seconds)
         .await
         .context("Failed to send rwho request")?
         .map_err(|e| match e {

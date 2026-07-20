@@ -24,14 +24,20 @@ use crate::{
 
 #[zlink::proxy("no.ntnu.pvv.roowho2.rwhod")]
 pub trait VarlinkRwhodClientProxy {
+    /// `max_idle_seconds` is the maximum idle time (in seconds) for a user
+    /// to be included in the response. `None` means no limit (i.e. the old
+    /// `all: true`). The client is expected to always send an explicit
+    /// value, defaulting to whatever it considers reasonable if the user
+    /// didn't ask for a specific limit.
     async fn rwho(
         &mut self,
-        all: bool,
+        max_idle_seconds: Option<i64>,
     ) -> zlink::Result<Result<VarlinkRwhoResponse, VarlinkRwhodClientError>>;
 
+    /// See [`VarlinkRwhodClientProxy::rwho`] for the meaning of `max_idle_seconds`.
     async fn ruptime(
         &mut self,
-        all: bool,
+        max_idle_seconds: Option<i64>,
     ) -> zlink::Result<Result<VarlinkRuptimeResponse, VarlinkRwhodClientError>>;
 }
 
@@ -40,14 +46,16 @@ pub trait VarlinkRwhodClientProxy {
 pub enum VarlinkRwhodClientRequest {
     #[serde(rename = "no.ntnu.pvv.roowho2.rwhod.Rwho")]
     Rwho {
-        /// Retrieve all users, even those that have been idle for a long time.
-        all: bool,
+        /// Maximum idle time (in seconds) for a user to be included.
+        /// `None` means no limit (i.e. return all users).
+        max_idle_seconds: Option<i64>,
     },
 
     #[serde(rename = "no.ntnu.pvv.roowho2.rwhod.Ruptime")]
     Ruptime {
-        /// Count all users, even those that have been idle for a long time.
-        all: bool,
+        /// Maximum idle time (in seconds) for a user to be counted.
+        /// `None` means no limit (i.e. return all users).
+        max_idle_seconds: Option<i64>,
     },
 }
 
@@ -165,8 +173,11 @@ impl VarlinkRoowhoo2ClientServer {
 }
 
 impl VarlinkRoowhoo2ClientServer {
-    async fn handle_rwho_request(&self, all: bool) -> VarlinkRwhoResponse {
-        tracing::debug!(all, "Handling Rwho request");
+    async fn handle_rwho_request(
+        &self,
+        max_idle_time: Option<chrono::TimeDelta>,
+    ) -> VarlinkRwhoResponse {
+        tracing::debug!(?max_idle_time, "Handling Rwho request");
         let store = self.whod_status_store.read().await;
 
         let mut all_user_entries = Vec::with_capacity(store.len());
@@ -175,7 +186,7 @@ impl VarlinkRoowhoo2ClientServer {
                 status_update
                     .users
                     .iter()
-                    .filter(|user| all || user.idle_time < chrono::Duration::hours(1))
+                    .filter(|user| max_idle_time.is_none_or(|max| user.idle_time < max))
                     .cloned()
                     .map(|user| (status_update.hostname.clone(), user)),
             );
@@ -184,18 +195,21 @@ impl VarlinkRoowhoo2ClientServer {
         all_user_entries
     }
 
-    async fn handle_ruptime_request(&self, all: bool) -> VarlinkRuptimeResponse {
-        tracing::debug!(all, "Handling Ruptime request");
+    async fn handle_ruptime_request(
+        &self,
+        max_idle_time: Option<chrono::TimeDelta>,
+    ) -> VarlinkRuptimeResponse {
+        tracing::debug!(?max_idle_time, "Handling Ruptime request");
         let store = self.whod_status_store.read().await;
 
         store
             .values()
             .cloned()
             .map(|mut status_update| {
-                if !all {
+                if let Some(max_idle_time) = max_idle_time {
                     status_update
                         .users
-                        .retain(|user| user.idle_time < chrono::Duration::hours(1));
+                        .retain(|user| user.idle_time < max_idle_time);
                 }
                 status_update
             })
@@ -287,7 +301,7 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
         Self::ReplyError<'service>,
     > {
         match call.method() {
-            VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Rwho { all }) => {
+            VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Rwho { max_idle_seconds }) => {
                 if !self.rwhod_enabled {
                     return (
                         MethodReply::Error(VarlinkReplyError::Rwhod(
@@ -297,19 +311,42 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                     );
                 }
 
-                let result =
-                    match timeout(Duration::from_secs(2), self.handle_rwho_request(*all)).await {
-                        Ok(response) => response,
-                        Err(_) => {
-                            tracing::error!("Rwho request timed out after 2 seconds");
-                            return (
-                                MethodReply::Error(VarlinkReplyError::Rwhod(
-                                    VarlinkRwhodClientError::TimedOut,
-                                )),
-                                Default::default(),
-                            );
-                        }
-                    };
+                let max_idle_time = match max_idle_seconds
+                    .map(|secs| chrono::TimeDelta::try_seconds(secs).ok_or(()))
+                    .transpose()
+                    .map_err(|_| {
+                        tracing::error!(
+                            "Received out-of-range max_idle_seconds: {:?}",
+                            max_idle_seconds
+                        );
+                        (
+                            MethodReply::Error(VarlinkReplyError::Rwhod(
+                                VarlinkRwhodClientError::InvalidRequest,
+                            )),
+                            Default::default(),
+                        )
+                    }) {
+                    Ok(max_idle_time) => max_idle_time,
+                    Err(err) => return err,
+                };
+
+                let result = match timeout(
+                    Duration::from_secs(2),
+                    self.handle_rwho_request(max_idle_time),
+                )
+                .await
+                {
+                    Ok(response) => response,
+                    Err(_) => {
+                        tracing::error!("Rwho request timed out after 2 seconds");
+                        return (
+                            MethodReply::Error(VarlinkReplyError::Rwhod(
+                                VarlinkRwhodClientError::TimedOut,
+                            )),
+                            Default::default(),
+                        );
+                    }
+                };
 
                 (
                     MethodReply::Single(Some(VarlinkReply::Rwhod(
@@ -318,7 +355,7 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                     Default::default(),
                 )
             }
-            VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Ruptime { all }) => {
+            VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Ruptime { max_idle_seconds }) => {
                 if !self.rwhod_enabled {
                     return (
                         MethodReply::Error(VarlinkReplyError::Rwhod(
@@ -328,9 +365,28 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                     );
                 }
 
+                let max_idle_time = match max_idle_seconds
+                    .map(|secs| chrono::TimeDelta::try_seconds(secs).ok_or(()))
+                    .transpose()
+                    .map_err(|_| {
+                        tracing::error!(
+                            "Received out-of-range max_idle_seconds: {:?}",
+                            max_idle_seconds
+                        );
+                        (
+                            MethodReply::Error(VarlinkReplyError::Rwhod(
+                                VarlinkRwhodClientError::InvalidRequest,
+                            )),
+                            Default::default(),
+                        )
+                    }) {
+                    Ok(max_idle_time) => max_idle_time,
+                    Err(err) => return err,
+                };
+
                 let result = match timeout(
                     Duration::from_secs(2),
-                    self.handle_ruptime_request(*all),
+                    self.handle_ruptime_request(max_idle_time),
                 )
                 .await
                 {

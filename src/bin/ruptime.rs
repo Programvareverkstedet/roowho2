@@ -13,13 +13,23 @@ use roowho2_lib::{
 /// `ruptime` gives a status line like uptime for each machine on the local network;
 /// these are formed from packets broadcast by each host on the network once a minute.
 ///
-/// Machines for which no status report has been received for 11 minutes are shown as being down.
+/// Machines for which no status report has been received for a while (11 minutes by default,
+/// see `--uptime-timeout`) are shown as being down.
 #[derive(Debug, Parser)]
 #[command(author = "Programvareverkstedet <projects@pvv.ntnu.no>", version)]
 pub struct Args {
     /// Users idle an hour or more are not counted unless the `-a` flag is given.
-    #[arg(long, short)]
+    #[arg(long, short, conflicts_with = "idle_timeout")]
     all: bool,
+
+    /// Only count users idle for less than this many minutes.
+    /// Cannot be used together with `--all`.
+    #[arg(long, value_name = "MINUTES", default_value_t = DEFAULT_IDLE_TIMEOUT_MINUTES)]
+    idle_timeout: u32,
+
+    /// Consider a machine down if no status report has been received from it for this many minutes.
+    #[arg(long, value_name = "MINUTES", default_value_t = DEFAULT_UPTIME_TIMEOUT_MINUTES)]
+    uptime_timeout: u32,
 
     /// Sort by load average.
     #[arg(long, short, conflicts_with = "time", conflicts_with = "users")]
@@ -51,6 +61,12 @@ pub struct Args {
     completions: Option<Shell>,
 }
 
+/// Users idle for longer than this are not counted by default.
+const DEFAULT_IDLE_TIMEOUT_MINUTES: u32 = 60;
+
+/// Machines that haven't reported in for longer than this are shown as down by default.
+const DEFAULT_UPTIME_TIMEOUT_MINUTES: u32 = 11;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -65,12 +81,18 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let max_idle_seconds = if args.all {
+        None
+    } else {
+        Some(i64::from(args.idle_timeout) * 60)
+    };
+
     let mut conn = zlink::tokio::unix::connect("/run/roowho2/roowho2.varlink")
         .await
         .expect("Failed to connect to rwhod server");
 
     let mut reply = conn
-        .ruptime(args.all)
+        .ruptime(max_idle_seconds)
         .await
         .context("Failed to send rwho request")?
         .map_err(|e| match e {
@@ -96,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
     //     }
     } else {
         for entry in &reply {
-            let line = old_format_machine_entry(entry);
+            let line = old_format_machine_entry(entry, args.uptime_timeout);
             println!("{}", line);
         }
     }
@@ -138,9 +160,9 @@ fn sort_entries(
     });
 }
 
-fn old_format_machine_entry(entry: &WhodStatusUpdate) -> String {
+fn old_format_machine_entry(entry: &WhodStatusUpdate, uptime_timeout_minutes: u32) -> String {
     let time_since_last_ping = Utc::now() - entry.sendtime;
-    let is_up = time_since_last_ping <= Duration::minutes(11);
+    let is_up = time_since_last_ping <= Duration::minutes(i64::from(uptime_timeout_minutes));
 
     let uptime = Utc::now() - entry.boot_time;
     let days = uptime.num_days();
