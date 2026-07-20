@@ -19,8 +19,12 @@ nixpkgs.lib.nixosSystem {
     ({ config, lib, ... }: {
       system.stateVersion = config.system.nixos.release;
       virtualisation.graphics = false;
-
       virtualisation.memorySize = 256;
+
+      boot.kernelParams = [
+        "audit=1"
+        "audit_backlog_limit=1024"
+      ];
 
       users.users.alice.extraGroups = [ "wheel" ];
       users.users.bob.uid = 1001;

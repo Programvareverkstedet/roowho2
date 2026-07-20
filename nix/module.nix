@@ -79,6 +79,16 @@ in {
               '';
             };
 
+            realtime_updates = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              example = false;
+              description = ''
+                Whether to react to Linux audit log activity (e.g. logins/logouts)
+                and push status updates immediately.
+              '';
+            };
+
             ignoreUsers = lib.mkOption {
               type = with lib.types; listOf (either str ints.unsigned);
               default = [ ];
@@ -274,6 +284,22 @@ in {
         FileDescriptorName = "rwhod_socket";
         Broadcast = true;
       } // cfg.settings.rwhod.socketConfig;
+    };
+
+    systemd.sockets.roowho2-audit = lib.mkIf (cfg.settings.rwhod.enable && cfg.settings.rwhod.realtime_updates) {
+      wantedBy = [ "sockets.target" ];
+      description = "Roowho2 Audit Netlink Socket";
+      unitConfig = {
+        ConditionKernelCommandLine = [
+          "!audit=0"
+          "!audit=off"
+        ];
+      };
+      socketConfig = {
+        Service = "roowho2.service";
+        FileDescriptorName = "audit_socket";
+        ListenNetlink = "audit 1"; # AUDIT_NLGRP_READLOG
+      };
     };
 
     # systemd.sockets.roowho2-fingerd = lib.mkIf cfg.settings.fingerd.enable && cfg.settings.fingerd.enableRemoteFinger {

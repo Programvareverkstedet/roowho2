@@ -61,6 +61,13 @@ pub struct RwhodConfig {
     ///
     /// If left as `None`, defaults to 4096.
     pub max_status_entries: Option<usize>,
+
+    /// Whether to react to Linux audit log activity (e.g. logins/logouts)
+    /// and push a status update immediately, instead of only on the
+    /// regular `send_interval_seconds` interval.
+    ///
+    /// If left as `None`, defaults to `false`.
+    pub realtime_updates: Option<bool>,
 }
 
 impl RwhodConfig {
@@ -94,6 +101,11 @@ impl RwhodConfig {
             Some(max_status_entries) => max_status_entries,
             None => DEFAULT_MAX_STATUS_ENTRIES,
         }
+    }
+
+    /// Resolves [`Self::realtime_updates`] into a concrete flag.
+    pub fn realtime_updates_enabled(&self) -> bool {
+        self.realtime_updates.unwrap_or(false)
     }
 }
 

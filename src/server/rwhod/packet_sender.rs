@@ -6,6 +6,7 @@ use std::{
 };
 use tokio::{
     net::UdpSocket,
+    sync::mpsc,
     time::{Duration as TokioDuration, interval},
 };
 
@@ -115,11 +116,31 @@ pub async fn rwhod_packet_sender_task(
     interfaces: Vec<RwhodSendTarget>,
     ignore_list: Option<IgnoreList>,
     send_interval: TokioDuration,
+    mut realtime_update_trigger: mpsc::Receiver<()>,
 ) -> anyhow::Result<()> {
     let mut interval = interval(send_interval);
+    let mut trigger_closed = false;
 
     loop {
-        interval.tick().await;
+        if trigger_closed {
+            interval.tick().await;
+        } else {
+            tokio::select! {
+                _ = interval.tick() => {}
+                triggered = realtime_update_trigger.recv() => {
+                    if triggered.is_some() {
+                        tracing::debug!("Sending an early rwhod update due to realtime trigger");
+                        interval.reset();
+                    } else {
+                        tracing::warn!(
+                            "Realtime update channel closed unexpectedly; falling back to interval-only updates"
+                        );
+                        trigger_closed = true;
+                        continue;
+                    }
+                }
+            }
+        }
 
         let status_update = generate_rwhod_status_update(ignore_list.as_ref())?;
 

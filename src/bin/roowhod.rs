@@ -105,12 +105,20 @@ async fn main() -> anyhow::Result<()> {
             })
             .context("RWHOD server is enabled, but socket fd not provided by systemd")??;
 
+        let audit_socket: Option<OwnedFd> = fd_map
+            .get("audit_socket")
+            .map(|fd| fd.try_clone())
+            .transpose()
+            .context("Failed to clone audit socket fd")?;
+
         join_set.spawn(rwhod_server(
             socket,
             whod_status_store.clone(),
             rwhod_ignore_list.clone(),
             config.rwhod.interfaces.clone(),
             config.rwhod.send_interval(),
+            config.rwhod.realtime_updates_enabled(),
+            audit_socket,
         ));
     } else {
         tracing::debug!("RWHOD server is disabled in configuration");
@@ -148,13 +156,31 @@ async fn rwhod_server(
     ignore_list: Option<IgnoreList>,
     allowed_interfaces: Option<HashSet<String>>,
     send_interval: Duration,
+    realtime_updates_enabled: bool,
+    audit_socket: Option<OwnedFd>,
 ) -> anyhow::Result<()> {
     let socket = Arc::new(socket);
 
     let interfaces =
         roowho2_lib::server::rwhod::determine_relevant_interfaces(allowed_interfaces.as_ref())?;
+
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    match (realtime_updates_enabled, audit_socket) {
+        (true, Some(fd)) => {
+            tokio::spawn(roowho2_lib::server::rwhod::audit_change_notifier(tx, fd));
+        }
+        (true, None) => {
+            tracing::warn!(
+                "rwhod.realtime_updates is enabled, but no audit socket fd was provided by \
+                 systemd (e.g. the kernel might not have been booted with `audit=1`); \
+                 falling back to interval-only updates"
+            );
+        }
+        (false, _) => {}
+    }
+
     let sender_task =
-        rwhod_packet_sender_task(socket.clone(), interfaces, ignore_list, send_interval);
+        rwhod_packet_sender_task(socket.clone(), interfaces, ignore_list, send_interval, rx);
     let receiver_task = rwhod_packet_receiver_task(socket.clone(), whod_status_store);
 
     tokio::select! {

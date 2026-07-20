@@ -1,0 +1,13 @@
+[Unit]
+Description=Roowho2 Audit Netlink Socket
+
+ConditionKernelCommandLine=!audit=0
+ConditionKernelCommandLine=!audit=off
+
+[Socket]
+FileDescriptorName=audit_socket
+ListenNetlink=audit 1
+Service=roowho2.service
+
+[Install]
+WantedBy=sockets.target
