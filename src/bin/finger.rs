@@ -174,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let mut conn = zlink::unix::connect("/run/roowho2/roowho2.varlink")
+    let mut conn = zlink::tokio::unix::connect("/run/roowho2/roowho2.varlink")
         .await
         .expect("Failed to connect to fingerd server");
 

@@ -1,10 +1,15 @@
 use std::{os::fd::OwnedFd, time::Duration};
 
 use anyhow::Context;
+use futures_util::stream;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
-use zlink::{ReplyError, service::MethodReply};
+use zlink::{
+    ReplyError,
+    service::MethodReply,
+    tokio::unix::{Listener as UnixListener, Stream as UnixStream},
+};
 
 use crate::{
     proto::{WhodStatusUpdate, WhodUserEntry, finger_protocol::FingerResponseUserEntry},
@@ -260,18 +265,22 @@ impl VarlinkRoowhoo2ClientServer {
     }
 }
 
-impl zlink::Service<zlink::unix::Stream> for VarlinkRoowhoo2ClientServer {
+impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
     type MethodCall<'de> = VarlinkMethod;
     type ReplyParams<'se> = VarlinkReply;
-    type ReplyStreamParams = ();
-    type ReplyStream = futures_util::stream::Empty<(zlink::Reply<()>, Vec<OwnedFd>)>;
     type ReplyError<'se> = VarlinkReplyError;
+    type ReplyStreamParams = ();
+    type ReplyStream = stream::Empty<(
+        Result<zlink::Reply<Self::ReplyStreamParams>, Self::ReplyStreamError>,
+        Vec<OwnedFd>,
+    )>;
+    type ReplyStreamError = ();
 
     async fn handle<'service>(
         &'service mut self,
         call: &'service zlink::Call<Self::MethodCall<'_>>,
-        _conn: &mut zlink::Connection<zlink::unix::Stream>,
-        _fds: Vec<std::os::fd::OwnedFd>,
+        _conn: &mut zlink::Connection<UnixStream>,
+        _fds: Vec<OwnedFd>,
     ) -> zlink::service::HandleResult<
         Self::ReplyParams<'service>,
         Self::ReplyStream,
@@ -398,7 +407,7 @@ impl zlink::Service<zlink::unix::Stream> for VarlinkRoowhoo2ClientServer {
 }
 
 pub async fn varlink_client_server_task(
-    socket: zlink::unix::Listener,
+    socket: UnixListener,
     whod_status_store: RwhodStatusStore,
     rwhod_enabled: bool,
     fingerd_enabled: bool,

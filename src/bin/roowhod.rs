@@ -166,7 +166,7 @@ async fn client_server(
     let std_socket =
         unsafe { std::os::unix::net::UnixListener::from_raw_fd(socket_fd.as_raw_fd()) };
     std_socket.set_nonblocking(true)?;
-    let zlink_listener = zlink::unix::Listener::try_from(OwnedFd::from(std_socket))?;
+    let zlink_listener = zlink::tokio::unix::Listener::try_from(OwnedFd::from(std_socket))?;
     let client_server_task = varlink_client_server_task(
         zlink_listener,
         whod_status_store,

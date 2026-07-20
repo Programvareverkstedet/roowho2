@@ -205,7 +205,12 @@ impl Whod {
 
         let mut wd_we = array::from_fn(|_| Whoent::zeroed());
 
-        for (byte_chunk, whoent) in bytes.chunks_exact(Whoent::SIZE).zip(wd_we.iter_mut()) {
+        for (byte_chunk, whoent) in bytes
+            .as_chunks::<{ Whoent::SIZE }>()
+            .0
+            .iter()
+            .zip(wd_we.iter_mut())
+        {
             let mut chunk_bytes = bytes::Bytes::copy_from_slice(byte_chunk);
 
             let mut out_line = [0u8; Outmp::MAX_TTY_NAME_LEN];
