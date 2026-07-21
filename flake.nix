@@ -122,5 +122,11 @@
       # NOTE: the non-crane build runs tests during checkPhase
       inherit (self.packages.${system}) roowho2;
     });
+
+    tests = forAllSystems (system: pkgs: _: let
+      pkgs' = pkgs.extend self.overlays.default;
+    in
+       import ./nix/tests { pkgs = pkgs'; }
+    );
   };
 }
