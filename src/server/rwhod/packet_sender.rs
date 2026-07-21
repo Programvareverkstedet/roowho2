@@ -18,6 +18,10 @@ use crate::{
 /// Default port for rwhod communication.
 pub const RWHOD_BROADCAST_PORT: u16 = 513;
 
+/// How long to wait after a realtime update before actually reading utmp and sending a status update.
+/// This is necessary because audit log events can arrive before the utmp record gets updated.
+const REALTIME_UPDATE_SETTLE_DELAY: TokioDuration = TokioDuration::from_millis(500);
+
 #[derive(Debug, Clone)]
 pub struct RwhodSendTarget {
     /// Name of the network interface.
@@ -141,6 +145,7 @@ pub async fn rwhod_packet_sender_task(
                     if triggered.is_some() {
                         tracing::debug!("Sending an early rwhod update due to realtime trigger");
                         interval.reset();
+                        tokio::time::sleep(REALTIME_UPDATE_SETTLE_DELAY).await;
                     } else {
                         tracing::warn!(
                             "Realtime update channel closed unexpectedly; falling back to interval-only updates"
