@@ -313,6 +313,10 @@ in {
     # };
 
     systemd.services.roowho2 = {
+      # rwhod needs the network devices to be available for enumeration before starting.
+      after = lib.mkIf cfg.settings.rwhod.enable  [ "network-online.target" ];
+      wants = lib.mkIf cfg.settings.rwhod.enable  [ "network-online.target" ];
+
       serviceConfig = {
         Type = "notify";
         ExecStart = let
