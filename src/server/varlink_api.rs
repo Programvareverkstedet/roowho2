@@ -1,4 +1,4 @@
-use std::{os::fd::OwnedFd, time::Duration};
+use std::{collections::HashMap, os::fd::OwnedFd, time::Duration};
 
 use anyhow::Context;
 use futures_util::stream;
@@ -66,7 +66,7 @@ pub enum VarlinkRwhodClientResponse {
     Ruptime(VarlinkRuptimeResponse),
 }
 
-pub type VarlinkRwhoResponse = Vec<(String, WhodUserEntry)>;
+pub type VarlinkRwhoResponse = HashMap<String, Vec<WhodUserEntry>>;
 pub type VarlinkRuptimeResponse = Vec<WhodStatusUpdate>;
 
 #[derive(Debug, Clone, PartialEq, ReplyError)]
@@ -180,19 +180,19 @@ impl VarlinkRoowhoo2ClientServer {
         tracing::debug!(?max_idle_time, "Handling Rwho request");
         let store = self.whod_status_store.read().await;
 
-        let mut all_user_entries = Vec::with_capacity(store.len());
-        for status_update in store.values() {
-            all_user_entries.extend(
-                status_update
+        store
+            .values()
+            .filter_map(|status_update| {
+                let users: Vec<WhodUserEntry> = status_update
                     .users
                     .iter()
                     .filter(|user| max_idle_time.is_none_or(|max| user.idle_time < max))
                     .cloned()
-                    .map(|user| (status_update.hostname.clone(), user)),
-            );
-        }
+                    .collect();
 
-        all_user_entries
+                (!users.is_empty()).then(|| (status_update.hostname.clone(), users))
+            })
+            .collect()
     }
 
     async fn handle_ruptime_request(

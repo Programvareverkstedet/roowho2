@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use clap_complete::{Shell, generate};
@@ -63,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("Failed to connect to rwhod server");
 
-    let mut reply = conn
+    let reply = conn
         .rwho(max_idle_seconds)
         .await
         .context("Failed to send rwho request")?
@@ -79,23 +81,40 @@ async fn main() -> anyhow::Result<()> {
             }
         })?;
 
-    reply.sort_by(|(host, user), (host2, user2)| {
-        user.user_id
-            .cmp(&user2.user_id)
-            .then_with(|| host.cmp(host2))
-            .then_with(|| user.tty.cmp(&user2.tty))
-    });
-
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&reply).unwrap());
-    } else if args.old {
-        old_format_user_entries(&reply)
-            .iter()
-            .for_each(|line| println!("{}", line));
+        let sorted: BTreeMap<String, Vec<WhodUserEntry>> = reply
+            .into_iter()
+            .map(|(hostname, mut users)| {
+                users.sort_by(|a, b| a.user_id.cmp(&b.user_id).then_with(|| a.tty.cmp(&b.tty)));
+                (hostname, users)
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&sorted).unwrap());
     } else {
-        old_format_user_entries(&reply)
-            .iter()
-            .for_each(|line| println!("{}", line));
+        let mut entries: Vec<(String, WhodUserEntry)> = reply
+            .into_iter()
+            .flat_map(|(hostname, users)| {
+                users.into_iter().map(move |user| (hostname.clone(), user))
+            })
+            .collect();
+
+        entries.sort_by(|(host, user), (host2, user2)| {
+            user.user_id
+                .cmp(&user2.user_id)
+                .then_with(|| host.cmp(host2))
+                .then_with(|| user.tty.cmp(&user2.tty))
+        });
+
+        if args.old {
+            old_format_user_entries(&entries)
+                .iter()
+                .for_each(|line| println!("{}", line));
+        } else {
+            // TODO: add a newer and nicer format here
+            old_format_user_entries(&entries)
+                .iter()
+                .for_each(|line| println!("{}", line));
+        }
     }
 
     Ok(())
