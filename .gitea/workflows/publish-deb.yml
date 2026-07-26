@@ -17,10 +17,11 @@ on:
         description: "Whether to build the package with stable rust"
         type: choice
         options:
-          - stable
+          # NOTE: we are using unstable features
+          # - stable
           - nightly
           - beta
-        default: stable
+        default: nightly
 
 env:
   BINSTALL_DISABLE_TELEMETRY: 'true'
