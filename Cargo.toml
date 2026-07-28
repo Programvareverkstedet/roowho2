@@ -42,6 +42,7 @@ chrono-tz = "0.10.4"
 netlink-proto = "0.12.0"
 netlink-sys = { version = "0.8.8", features = ["tokio_socket"] }
 netlink-packet-audit = "0.6.1"
+thiserror = "2.0.19"
 
 [dev-dependencies]
 indoc = "2.0.7"
@@ -90,6 +91,16 @@ name = "rwho"
 bench = false
 path = "src/bin/rwho.rs"
 
+[[bin]]
+name = "wall"
+bench = false
+path = "src/bin/wall.rs"
+
+[[bin]]
+name = "write"
+bench = false
+path = "src/bin/write.rs"
+
 [profile.releaselto]
 inherits = "release"
 strip = true
@@ -123,6 +134,16 @@ assets = [
   [
     "target/release/rwho",
     "usr/bin/rwho",
+    "0755"
+  ],
+  [
+    "target/release/wall",
+    "usr/bin/wall",
+    "0755"
+  ],
+  [
+    "target/release/write",
+    "usr/bin/write",
     "0755"
   ],
   [

@@ -81,7 +81,7 @@ buildFunction ({
       installShellCompletion "--${shell}" --cmd "${command}" "$TMP/${command}.${shell}"
     '') {
       shell = [ "bash" "zsh" "fish" ];
-      command = [ "rwho" "ruptime" "finger" ];
+      command = [ "rwho" "ruptime" "finger" "wall" "write" ];
     };
   in lib.concatStringsSep "\n" installShellCompletions;
 
