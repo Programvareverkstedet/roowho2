@@ -20,6 +20,8 @@ use crate::{
     },
 };
 
+pub const DEFAULT_CLIENT_SERVER_SOCKET_PATH: &str = "/run/roowho2/roowho2.varlink";
+
 // Types for 'no.ntnu.pvv.roowho2.rwhod'
 
 #[zlink::proxy("no.ntnu.pvv.roowho2.rwhod")]

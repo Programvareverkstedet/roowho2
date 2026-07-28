@@ -5,7 +5,9 @@ use clap::{CommandFactory, Parser};
 use clap_complete::{Shell, generate};
 use roowho2_lib::{
     proto::WhodUserEntry,
-    server::varlink_api::{VarlinkRwhodClientError, VarlinkRwhodClientProxy},
+    server::varlink_api::{
+        DEFAULT_CLIENT_SERVER_SOCKET_PATH, VarlinkRwhodClientError, VarlinkRwhodClientProxy,
+    },
 };
 
 /// Check who is logged in on local machines.
@@ -61,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
         Some(i64::from(args.idle_timeout) * 60)
     };
 
-    let mut conn = zlink::tokio::unix::connect("/run/roowho2/roowho2.varlink")
+    let mut conn = zlink::tokio::unix::connect(DEFAULT_CLIENT_SERVER_SOCKET_PATH)
         .await
         .expect("Failed to connect to rwhod server");
 

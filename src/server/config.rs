@@ -4,8 +4,6 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/roowho2/config.toml";
 
-pub const DEFAULT_CLIENT_SOCKET_PATH: &str = "/run/roowho2/server_client.sock";
-
 /// Default interval between rwhod status packet broadcasts.
 const DEFAULT_SEND_INTERVAL_SECONDS: u64 = 60;
 

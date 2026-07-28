@@ -5,7 +5,9 @@ use roowho2_lib::{
     proto::finger_protocol::FingerResponseUserEntry,
     server::{
         fingerd::{FingerRequestInfo, FingerRequestNetworking},
-        varlink_api::{VarlinkFingerClientError, VarlinkFingerClientProxy},
+        varlink_api::{
+            DEFAULT_CLIENT_SERVER_SOCKET_PATH, VarlinkFingerClientError, VarlinkFingerClientProxy,
+        },
     },
 };
 
@@ -174,7 +176,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let mut conn = zlink::tokio::unix::connect("/run/roowho2/roowho2.varlink")
+    let mut conn = zlink::tokio::unix::connect(DEFAULT_CLIENT_SERVER_SOCKET_PATH)
         .await
         .expect("Failed to connect to fingerd server");
 
