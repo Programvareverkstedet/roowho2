@@ -34,6 +34,7 @@ pub enum VarlinkMethod {
 pub enum VarlinkReply {
     Rwhod(VarlinkRwhodClientResponse),
     Finger(VarlinkFingerClientResponse),
+    Walld(VarlinkWalldClientResponse),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -42,6 +43,7 @@ pub enum VarlinkReply {
 pub enum VarlinkReplyError {
     Rwhod(VarlinkRwhodClientError),
     Finger(VarlinkFingerClientError),
+    Walld(VarlinkWalldClientError),
 }
 
 #[derive(Debug, Clone)]
@@ -84,13 +86,31 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
     async fn handle<'service>(
         &'service mut self,
         call: &'service zlink::Call<Self::MethodCall<'_>>,
-        _conn: &mut zlink::Connection<UnixStream>,
+        conn: &mut zlink::Connection<UnixStream>,
         _fds: Vec<OwnedFd>,
     ) -> zlink::service::HandleResult<
         Self::ReplyParams<'service>,
         Self::ReplyStream,
         Self::ReplyError<'service>,
     > {
+        let (peer_pid, peer_uid) = match conn.peer_credentials().await {
+            Ok(creds) => (
+                creds.process_id().as_raw_pid() as u32,
+                creds.unix_user_id().as_raw(),
+            ),
+            Err(e) => {
+                tracing::error!("failed to read peer credentials: {e}");
+                // TODO: peercreds are currently only used for walld, but this should be a more "toplevel"
+                //       error at some point when we start using peercred for other things as well.
+                return (
+                    MethodReply::Error(VarlinkReplyError::Walld(VarlinkWalldClientError::Io {
+                        message: "failed to identify caller".to_string(),
+                    })),
+                    Default::default(),
+                );
+            }
+        };
+
         match call.method() {
             VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Rwho { max_idle_seconds }) => {
                 if !self.rwhod_enabled {
@@ -250,23 +270,99 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                     Default::default(),
                 )
             }
-            VarlinkMethod::Walld(VarlinkWalldClientRequest::Wall { .. }) => {
-                tracing::error!("Received Wall request, but walld service is not implemented");
-                (
-                    MethodReply::Error(VarlinkReplyError::Rwhod(
-                        VarlinkRwhodClientError::InvalidRequest,
-                    )),
-                    Default::default(),
+            VarlinkMethod::Walld(VarlinkWalldClientRequest::Wall {
+                source_tty,
+                message,
+                group,
+                nobanner,
+                timeout_secs,
+            }) => {
+                // TODO: add walld toggle to config
+
+                // TODO: ensure the outer duration is more than the inner duration.
+                let result = match timeout(
+                    Duration::from_secs(2),
+                    handle_wall_request(
+                        peer_pid,
+                        peer_uid,
+                        source_tty.clone(),
+                        message.clone(),
+                        group.clone(),
+                        *nobanner,
+                        *timeout_secs,
+                    ),
                 )
+                .await
+                {
+                    Ok(response) => response,
+                    Err(_) => {
+                        tracing::error!("Wall request timed out after 2 seconds");
+                        return (
+                            MethodReply::Error(VarlinkReplyError::Walld(
+                                VarlinkWalldClientError::TimedOut,
+                            )),
+                            Default::default(),
+                        );
+                    }
+                };
+
+                match result {
+                    Ok(response) => (
+                        MethodReply::Single(Some(VarlinkReply::Walld(
+                            VarlinkWalldClientResponse::Wall(response),
+                        ))),
+                        Default::default(),
+                    ),
+                    Err(err) => (
+                        MethodReply::Error(VarlinkReplyError::Walld(err)),
+                        Default::default(),
+                    ),
+                }
             }
-            VarlinkMethod::Walld(VarlinkWalldClientRequest::Write { .. }) => {
-                tracing::error!("Received Write request, but walld service is not implemented");
-                (
-                    MethodReply::Error(VarlinkReplyError::Rwhod(
-                        VarlinkRwhodClientError::InvalidRequest,
-                    )),
-                    Default::default(),
+            VarlinkMethod::Walld(VarlinkWalldClientRequest::Write {
+                source_tty,
+                target_user,
+                target_tty,
+                message,
+            }) => {
+                // TODO: add walld toggle to config
+                let result = match timeout(
+                    Duration::from_secs(2),
+                    handle_write_request(
+                        peer_pid,
+                        peer_uid,
+                        source_tty.clone(),
+                        target_user.clone(),
+                        target_tty.clone(),
+                        message.clone(),
+                    ),
                 )
+                .await
+                {
+                    Ok(response) => response,
+                    Err(_) => {
+                        tracing::error!("Write request timed out after 2 seconds");
+                        return (
+                            MethodReply::Error(VarlinkReplyError::Walld(
+                                VarlinkWalldClientError::TimedOut,
+                            )),
+                            Default::default(),
+                        );
+                    }
+                };
+
+                match result {
+                    Ok(response) => (
+                        MethodReply::Single(Some(VarlinkReply::Walld(
+                            VarlinkWalldClientResponse::Write(response),
+                        ))),
+                        Default::default(),
+                    ),
+                    Err(err) => (
+                        MethodReply::Error(VarlinkReplyError::Walld(err)),
+                        Default::default(),
+                    ),
+                }
             }
         }
     }

@@ -1,9 +1,13 @@
-use std::io::Read as _;
+use std::{
+    io::{self, Read as _},
+    os::fd::AsFd,
+};
 
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use clap_complete::{Shell, generate};
 
+use nix::unistd;
 use roowho2_lib::server::varlink_api::{
     DEFAULT_CLIENT_SERVER_SOCKET_PATH, VarlinkWalldClientProxy, VarlinkWalldClientResponse,
 };
@@ -49,7 +53,17 @@ async fn main() -> anyhow::Result<()> {
         .user
         .expect("required_unless_present=completions guarantees this is set");
 
-    VarlinkWalldClientProxy::write(&mut conn, user, args.ttyname, message)
+    let stdin = io::stdin();
+    let source_tty = if !unistd::isatty(stdin.as_fd()).unwrap_or(false) {
+        None
+    } else {
+        // TODO: should we send this as a CStr maybe?
+        unistd::ttyname(stdin.as_fd())
+            .ok()
+            .map(|p| p.to_string_lossy().to_string())
+    };
+
+    VarlinkWalldClientProxy::write(&mut conn, source_tty, user, args.ttyname, message)
         .await
         .context("varlink call to walld failed")?
         .map_err(|err| anyhow::format_err!("{err}"))
