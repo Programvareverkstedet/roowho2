@@ -1,23 +1,35 @@
 [Unit]
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target dbus.socket
+After=network-online.target dbus.socket
 
 [Service]
 Type=notify
 Restart=on-failure
 DynamicUser=true
+
+# Needed for walld to open tty devices
+SupplementaryGroups=tty
 ExecStart=/usr/bin/roowhod
 
 ConfigurationDirectory=roowho2
 
+Environment=DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
+
 AmbientCapabilities=CAP_DAC_READ_SEARCH
 CapabilityBoundingSet=CAP_DAC_READ_SEARCH
-DeviceAllow=
+
+# walld needs access to tty/pts devices.
+DeviceAllow=char-tty rw
+DeviceAllow=char-pts rw
+PrivateDevices=false
+
+# Might use /proc/<pid>/stat to determine the caller's PID + UID
+ProtectProc=default
+
 DevicePolicy=closed
 LockPersonality=true
 MemoryDenyWriteExecute=true
 NoNewPrivileges=true
-PrivateDevices=true
 PrivateIPC=true
 PrivateMounts=true
 PrivateTmp=true
@@ -28,7 +40,6 @@ ProtectHostname=true
 ProtectKernelLogs=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
-ProtectProc=invisible
 RemoveIPC=true
 RestrictAddressFamilies=AF_INET
 RestrictAddressFamilies=AF_INET6
