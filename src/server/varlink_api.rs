@@ -19,6 +19,55 @@ pub use crate::server::varlink_api::{fingerd::*, rwhod::*, walld::*};
 
 pub const DEFAULT_CLIENT_SERVER_SOCKET_PATH: &str = "/run/roowho2/roowho2.varlink";
 
+macro_rules! require_enabled {
+    ($self:ident, $flag:ident, $reply_variant:ident, $error_ty:ident) => {
+        if !$self.$flag {
+            return (
+                MethodReply::Error(VarlinkReplyError::$reply_variant($error_ty::Disabled)),
+                Default::default(),
+            );
+        }
+    };
+}
+
+macro_rules! with_timeout {
+    ($future:expr, $name:literal, $reply_variant:ident, $error_ty:ident) => {
+        match timeout(Duration::from_secs(2), $future).await {
+            Ok(response) => response,
+            Err(_) => {
+                tracing::error!(concat!($name, " request timed out after 2 seconds"));
+                return (
+                    MethodReply::Error(VarlinkReplyError::$reply_variant($error_ty::TimedOut)),
+                    Default::default(),
+                );
+            }
+        }
+    };
+}
+
+macro_rules! reply_ok {
+    ($reply_variant:ident, $response_variant:path, $value:expr) => {
+        (
+            MethodReply::Single(Some(VarlinkReply::$reply_variant($response_variant(
+                $value,
+            )))),
+            Default::default(),
+        )
+    };
+}
+
+macro_rules! reply_result {
+    ($reply_variant:ident, $response_variant:path, $result:expr) => {
+        match $result {
+            Ok(response) => reply_ok!($reply_variant, $response_variant, response),
+            Err(err) => (
+                MethodReply::Error(VarlinkReplyError::$reply_variant(err)),
+                Default::default(),
+            ),
+        }
+    };
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 #[allow(unused)]
@@ -119,14 +168,7 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
 
         match call.method() {
             VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Rwho { max_idle_seconds }) => {
-                if !self.rwhod_enabled {
-                    return (
-                        MethodReply::Error(VarlinkReplyError::Rwhod(
-                            VarlinkRwhodClientError::Disabled,
-                        )),
-                        Default::default(),
-                    );
-                }
+                require_enabled!(self, rwhod_enabled, Rwhod, VarlinkRwhodClientError);
 
                 let max_idle_time = match max_idle_seconds
                     .map(|secs| chrono::TimeDelta::try_seconds(secs).ok_or(()))
@@ -147,40 +189,17 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                     Err(err) => return err,
                 };
 
-                let result = match timeout(
-                    Duration::from_secs(2),
+                let result = with_timeout!(
                     handle_rwho_request(&self.whod_status_store, max_idle_time),
-                )
-                .await
-                {
-                    Ok(response) => response,
-                    Err(_) => {
-                        tracing::error!("Rwho request timed out after 2 seconds");
-                        return (
-                            MethodReply::Error(VarlinkReplyError::Rwhod(
-                                VarlinkRwhodClientError::TimedOut,
-                            )),
-                            Default::default(),
-                        );
-                    }
-                };
+                    "Rwho",
+                    Rwhod,
+                    VarlinkRwhodClientError
+                );
 
-                (
-                    MethodReply::Single(Some(VarlinkReply::Rwhod(
-                        VarlinkRwhodClientResponse::Rwho(result),
-                    ))),
-                    Default::default(),
-                )
+                reply_ok!(Rwhod, VarlinkRwhodClientResponse::Rwho, result)
             }
             VarlinkMethod::Rwhod(VarlinkRwhodClientRequest::Ruptime { max_idle_seconds }) => {
-                if !self.rwhod_enabled {
-                    return (
-                        MethodReply::Error(VarlinkReplyError::Rwhod(
-                            VarlinkRwhodClientError::Disabled,
-                        )),
-                        Default::default(),
-                    );
-                }
+                require_enabled!(self, rwhod_enabled, Rwhod, VarlinkRwhodClientError);
 
                 let max_idle_time = match max_idle_seconds
                     .map(|secs| chrono::TimeDelta::try_seconds(secs).ok_or(()))
@@ -201,30 +220,14 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                     Err(err) => return err,
                 };
 
-                let result = match timeout(
-                    Duration::from_secs(2),
+                let result = with_timeout!(
                     handle_ruptime_request(&self.whod_status_store, max_idle_time),
-                )
-                .await
-                {
-                    Ok(response) => response,
-                    Err(_) => {
-                        tracing::error!("Ruptime request timed out after 2 seconds");
-                        return (
-                            MethodReply::Error(VarlinkReplyError::Rwhod(
-                                VarlinkRwhodClientError::TimedOut,
-                            )),
-                            Default::default(),
-                        );
-                    }
-                };
+                    "Ruptime",
+                    Rwhod,
+                    VarlinkRwhodClientError
+                );
 
-                (
-                    MethodReply::Single(Some(VarlinkReply::Rwhod(
-                        VarlinkRwhodClientResponse::Ruptime(result),
-                    ))),
-                    Default::default(),
-                )
+                reply_ok!(Rwhod, VarlinkRwhodClientResponse::Ruptime, result)
             }
             VarlinkMethod::Finger(VarlinkFingerClientRequest::Finger {
                 user_queries,
@@ -234,17 +237,9 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                 disable_user_account_db,
                 raw_remote_output,
             }) => {
-                if !self.fingerd_enabled {
-                    return (
-                        MethodReply::Error(VarlinkReplyError::Finger(
-                            VarlinkFingerClientError::Disabled,
-                        )),
-                        Default::default(),
-                    );
-                }
+                require_enabled!(self, fingerd_enabled, Finger, VarlinkFingerClientError);
 
-                let result = match timeout(
-                    Duration::from_secs(2),
+                let result = with_timeout!(
                     handle_finger_request(
                         &self.finger_ignore_list,
                         user_queries.clone(),
@@ -254,27 +249,12 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                         *disable_user_account_db,
                         *raw_remote_output,
                     ),
-                )
-                .await
-                {
-                    Ok(response) => response,
-                    Err(_) => {
-                        tracing::error!("Finger request timed out after 2 seconds");
-                        return (
-                            MethodReply::Error(VarlinkReplyError::Finger(
-                                VarlinkFingerClientError::TimedOut,
-                            )),
-                            Default::default(),
-                        );
-                    }
-                };
+                    "Finger",
+                    Finger,
+                    VarlinkFingerClientError
+                );
 
-                (
-                    MethodReply::Single(Some(VarlinkReply::Finger(
-                        VarlinkFingerClientResponse::Finger(result),
-                    ))),
-                    Default::default(),
-                )
+                reply_ok!(Finger, VarlinkFingerClientResponse::Finger, result)
             }
             VarlinkMethod::Walld(VarlinkWalldClientRequest::Wall {
                 source_tty,
@@ -283,18 +263,10 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                 nobanner,
                 timeout_secs,
             }) => {
-                if !self.walld_enabled {
-                    return (
-                        MethodReply::Error(VarlinkReplyError::Walld(
-                            VarlinkWalldClientError::Disabled,
-                        )),
-                        Default::default(),
-                    );
-                }
+                require_enabled!(self, walld_enabled, Walld, VarlinkWalldClientError);
 
                 // TODO: ensure the outer duration is more than the inner duration.
-                let result = match timeout(
-                    Duration::from_secs(2),
+                let result = with_timeout!(
                     handle_wall_request(
                         self.polkit.as_ref(),
                         peer_pid,
@@ -305,33 +277,12 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                         *nobanner,
                         *timeout_secs,
                     ),
-                )
-                .await
-                {
-                    Ok(response) => response,
-                    Err(_) => {
-                        tracing::error!("Wall request timed out after 2 seconds");
-                        return (
-                            MethodReply::Error(VarlinkReplyError::Walld(
-                                VarlinkWalldClientError::TimedOut,
-                            )),
-                            Default::default(),
-                        );
-                    }
-                };
+                    "Wall",
+                    Walld,
+                    VarlinkWalldClientError
+                );
 
-                match result {
-                    Ok(response) => (
-                        MethodReply::Single(Some(VarlinkReply::Walld(
-                            VarlinkWalldClientResponse::Wall(response),
-                        ))),
-                        Default::default(),
-                    ),
-                    Err(err) => (
-                        MethodReply::Error(VarlinkReplyError::Walld(err)),
-                        Default::default(),
-                    ),
-                }
+                reply_result!(Walld, VarlinkWalldClientResponse::Wall, result)
             }
             VarlinkMethod::Walld(VarlinkWalldClientRequest::Write {
                 source_tty,
@@ -339,17 +290,9 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                 target_tty,
                 message,
             }) => {
-                if !self.walld_enabled {
-                    return (
-                        MethodReply::Error(VarlinkReplyError::Walld(
-                            VarlinkWalldClientError::Disabled,
-                        )),
-                        Default::default(),
-                    );
-                }
+                require_enabled!(self, walld_enabled, Walld, VarlinkWalldClientError);
 
-                let result = match timeout(
-                    Duration::from_secs(2),
+                let result = with_timeout!(
                     handle_write_request(
                         self.polkit.as_ref(),
                         peer_pid,
@@ -359,33 +302,12 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                         target_tty.clone(),
                         message.clone(),
                     ),
-                )
-                .await
-                {
-                    Ok(response) => response,
-                    Err(_) => {
-                        tracing::error!("Write request timed out after 2 seconds");
-                        return (
-                            MethodReply::Error(VarlinkReplyError::Walld(
-                                VarlinkWalldClientError::TimedOut,
-                            )),
-                            Default::default(),
-                        );
-                    }
-                };
+                    "Write",
+                    Walld,
+                    VarlinkWalldClientError
+                );
 
-                match result {
-                    Ok(response) => (
-                        MethodReply::Single(Some(VarlinkReply::Walld(
-                            VarlinkWalldClientResponse::Write(response),
-                        ))),
-                        Default::default(),
-                    ),
-                    Err(err) => (
-                        MethodReply::Error(VarlinkReplyError::Walld(err)),
-                        Default::default(),
-                    ),
-                }
+                reply_result!(Walld, VarlinkWalldClientResponse::Write, result)
             }
         }
     }
