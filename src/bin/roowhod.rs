@@ -13,20 +13,25 @@ use tokio_util::sync::CancellationToken;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 
-use roowho2_lib::server::{
-    config::{DEFAULT_CONFIG_PATH, LogLevel},
-    ignore_list::IgnoreList,
-    rwhod::{
-        RwhodStatusRegistry, RwhodStatusStore, rwhod_packet_receiver_task, rwhod_packet_sender_task,
+use roowho2_lib::{
+    server::{
+        config::{DEFAULT_CONFIG_PATH, LogLevel},
+        ignore_list::IgnoreList,
+        rwhod::{
+            RwhodStatusRegistry, RwhodStatusStore, rwhod_packet_receiver_task,
+            rwhod_packet_sender_task,
+        },
+        varlink_api::varlink_client_server_task,
     },
-    varlink_api::varlink_client_server_task,
+    version,
 };
 
 #[derive(Parser)]
 #[command(
-    author = "Programvareverkstedet <projects@pvv.ntnu.no>",
-    about,
-    version
+  author = "Programvareverkstedet <projects@pvv.ntnu.no>",
+  about,
+  version,
+  long_version = version::LONG_VERSION
 )]
 struct Args {
     /// Path to configuration file

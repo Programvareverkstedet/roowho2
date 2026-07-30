@@ -1,11 +1,16 @@
 use clap::Parser;
+use roowho2_lib::version;
 
 /// Send a message to users logged on a host.
 ///
 /// The `rwall` command sends a message to the users logged into the specified host.
 /// The message to be sent can be typed in and terminated with EOF or it can be in a file
 #[derive(Debug, Parser)]
-#[command(author = "Programvareverkstedet <projects@pvv.ntnu.no>", version)]
+#[command(
+  author = "Programvareverkstedet <projects@pvv.ntnu.no>",
+  version,
+  long_version = version::LONG_VERSION
+)]
 pub struct Args {
     /// The host to send the message to
     host: String,

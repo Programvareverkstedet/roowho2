@@ -5,3 +5,4 @@
 pub mod proto;
 pub mod server;
 pub mod util;
+pub mod version;

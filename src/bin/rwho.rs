@@ -8,6 +8,7 @@ use roowho2_lib::{
     server::varlink_api::{
         DEFAULT_CLIENT_SERVER_SOCKET_PATH, VarlinkRwhodClientError, VarlinkRwhodClientProxy,
     },
+    version,
 };
 
 /// Check who is logged in on local machines.
@@ -20,7 +21,11 @@ use roowho2_lib::{
 /// If a user hasn't typed to the system for an hour or more,
 /// then the user will be omitted from the output of `rwho` unless the `-a` flag is given.
 #[derive(Debug, Parser)]
-#[command(author = "Programvareverkstedet <projects@pvv.ntnu.no>", version)]
+#[command(
+  author = "Programvareverkstedet <projects@pvv.ntnu.no>",
+  version,
+  long_version = version::LONG_VERSION
+)]
 pub struct Args {
     /// Print all machines responding even if no one is currently logged in
     #[arg(long, short, conflicts_with = "idle_timeout")]

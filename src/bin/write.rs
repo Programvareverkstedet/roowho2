@@ -8,13 +8,20 @@ use clap::{CommandFactory, Parser};
 use clap_complete::{Shell, generate};
 
 use nix::unistd;
-use roowho2_lib::server::varlink_api::{
-    DEFAULT_CLIENT_SERVER_SOCKET_PATH, VarlinkWalldClientProxy, VarlinkWalldClientResponse,
+use roowho2_lib::{
+    server::varlink_api::{
+        DEFAULT_CLIENT_SERVER_SOCKET_PATH, VarlinkWalldClientProxy, VarlinkWalldClientResponse,
+    },
+    version,
 };
 
 /// Send a message to another user
 #[derive(Debug, Parser)]
-#[command(author = "Programvareverkstedet <projects@pvv.ntnu.no>", version)]
+#[command(
+  author = "Programvareverkstedet <projects@pvv.ntnu.no>",
+  version,
+  long_version = version::LONG_VERSION
+)]
 pub struct Args {
     /// User to send the message to
     #[arg(value_name = "USER", required_unless_present = "completions")]

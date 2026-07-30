@@ -1,4 +1,5 @@
 use clap::Parser;
+use roowho2_lib::version;
 
 /// Check who is logged in to machines on local network.
 ///
@@ -8,7 +9,11 @@ use clap::Parser;
 /// the host-name with the names of the users currently logged on is printed on each line.
 /// The `rusers` command will wait for one minute to catch late responders.
 #[derive(Debug, Parser)]
-#[command(author = "Programvareverkstedet <projects@pvv.ntnu.no>", version)]
+#[command(
+  author = "Programvareverkstedet <projects@pvv.ntnu.no>",
+  version,
+  long_version = version::LONG_VERSION
+)]
 pub struct Args {
     /// Print all machines responding even if no one is currently logged in
     #[arg(long, short)]

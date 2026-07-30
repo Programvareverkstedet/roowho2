@@ -8,6 +8,7 @@ use roowho2_lib::{
     server::varlink_api::{
         DEFAULT_CLIENT_SERVER_SOCKET_PATH, VarlinkRwhodClientError, VarlinkRwhodClientProxy,
     },
+    version,
 };
 
 /// Show host status of local machines.
@@ -18,7 +19,11 @@ use roowho2_lib::{
 /// Machines for which no status report has been received for a while (11 minutes by default,
 /// see `--uptime-timeout`) are shown as being down.
 #[derive(Debug, Parser)]
-#[command(author = "Programvareverkstedet <projects@pvv.ntnu.no>", version)]
+#[command(
+  author = "Programvareverkstedet <projects@pvv.ntnu.no>",
+  version,
+  long_version = version::LONG_VERSION
+)]
 pub struct Args {
     /// Users idle an hour or more are not counted unless the `-a` flag is given.
     #[arg(long, short, conflicts_with = "idle_timeout")]

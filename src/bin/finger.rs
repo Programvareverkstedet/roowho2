@@ -9,6 +9,7 @@ use roowho2_lib::{
             DEFAULT_CLIENT_SERVER_SOCKET_PATH, VarlinkFingerClientError, VarlinkFingerClientProxy,
         },
     },
+    version,
 };
 
 /// User information lookup program
@@ -30,7 +31,11 @@ use roowho2_lib::{
 /// If standard output is a socket, finger will emit a carriage return (^M) before every linefeed (^J).
 /// This is for processing remote finger requests when invoked by the daemon.
 #[derive(Debug, Parser)]
-#[command(author = "Programvareverkstedet <projects@pvv.ntnu.no>", version)]
+#[command(
+  author = "Programvareverkstedet <projects@pvv.ntnu.no>",
+  version,
+  long_version = version::LONG_VERSION
+)]
 pub struct Args {
     /// Forces finger to use IPv4 addresses only.
     #[arg(long, short = '4', conflicts_with = "ipv6")]

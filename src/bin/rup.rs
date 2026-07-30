@@ -6,7 +6,11 @@ use clap::Parser;
 /// The output shows the current time of day, how long the system has been up, and the load averages.
 /// The load average numbers give the number of jobs in the run queue averaged over 1, 5 and 15 minutes.
 #[derive(Debug, Parser)]
-#[command(author = "Programvareverkstedet <projects@pvv.ntnu.no>", version)]
+#[command(
+  author = "Programvareverkstedet <projects@pvv.ntnu.no>",
+  version,
+  long_version = crate::version::LONG_VERSION
+)]
 pub struct Args {
     /// The hosts to query.
     hosts: Vec<String>,
