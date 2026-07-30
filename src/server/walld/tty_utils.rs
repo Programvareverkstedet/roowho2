@@ -33,6 +33,8 @@ pub enum TtyError {
     Unavailable(String),
     #[error("timed out writing to {0}")]
     Timeout(String),
+    #[error("{0}: not owned by the caller")]
+    NotOwnedByCaller(String),
     #[error("{path}: {source}")]
     Io {
         path: String,
@@ -87,6 +89,32 @@ pub fn stat_tty(name: &str) -> Result<TtyInfo, TtyError> {
         writable: mode.contains(Mode::S_IWGRP),
         atime,
     })
+}
+
+/// Verifies that `path` is a character device in `/dev/` owned by `uid`.
+pub fn verify_tty_owner(path: &str, uid: u32) -> Result<(), TtyError> {
+    if !path.starts_with("/dev/") || path.split('/').any(|part| part == "..") {
+        return Err(TtyError::InvalidName(path.to_string()));
+    }
+
+    let st = stat(Path::new(path)).map_err(|e| match e {
+        Errno::ENOENT => TtyError::NotFound(path.to_string()),
+        other => TtyError::Io {
+            path: path.to_string(),
+            source: other.into(),
+        },
+    })?;
+
+    let file_type = SFlag::from_bits_truncate(st.st_mode) & SFlag::S_IFMT;
+    if file_type != SFlag::S_IFCHR {
+        return Err(TtyError::NotCharacterDevice(path.to_string()));
+    }
+
+    if st.st_uid != uid {
+        return Err(TtyError::NotOwnedByCaller(path.to_string()));
+    }
+
+    Ok(())
 }
 
 /// A single logged-in session, as reported by utmpx (systemd-logind)

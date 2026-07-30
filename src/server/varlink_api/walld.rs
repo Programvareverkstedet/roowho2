@@ -148,6 +148,22 @@ fn hostname() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// Verifies that `source_tty` (if given) belongs to `source_uid`.
+fn verify_source_tty(
+    source_tty: Option<&str>,
+    source_uid: u32,
+) -> Result<(), VarlinkWalldClientError> {
+    let Some(tty) = source_tty else {
+        return Ok(());
+    };
+
+    tty_utils::verify_tty_owner(tty, source_uid).map_err(|err| {
+        VarlinkWalldClientError::InvalidRequest {
+            message: format!("source_tty {tty:?}: {err}"),
+        }
+    })
+}
+
 fn tty_error_to_walld_error(user: &str, tty: &str, err: TtyError) -> VarlinkWalldClientError {
     match err {
         TtyError::NotFound(_) | TtyError::InvalidName(_) | TtyError::NotCharacterDevice(_) => {
@@ -239,6 +255,8 @@ pub async fn handle_wall_request(
         });
     }
 
+    verify_source_tty(source_tty.as_deref(), source_uid)?;
+
     authorize(polkit, |authority| {
         check_wall(authority, source_pid, group.as_deref())
     })
@@ -284,6 +302,8 @@ pub async fn handle_write_request(
     tty: Option<String>,
     message: String,
 ) -> Result<VarlinkWriteResponse, VarlinkWalldClientError> {
+    verify_source_tty(source_tty.as_deref(), source_uid)?;
+
     authorize(polkit, |authority| {
         check_write(authority, source_pid, &user, tty.as_deref())
     })
