@@ -92,6 +92,7 @@
         fileset = lib.fileset.unions [
           (craneLib.fileset.commonCargoSources ./.)
           ./assets/systemd
+          ./assets/polkit
         ];
       };
 

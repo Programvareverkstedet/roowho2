@@ -1,0 +1,17 @@
+// Example site policy, layered on top of the <defaults> in no.ntnu.pvv.roowho2.policy.
+
+polkit.addRule(function (action, subject) {
+    if (action.id !== "no.ntnu.pvv.roowho2.wall" && action.id !== "no.ntnu.pvv.roowho2.write") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    // `wall -g <group>` restricted to members of that same group.
+    if (action.id === "no.ntnu.pvv.roowho2.wall") {
+        var group = action.lookup("group");
+        if (group && !subject.isInGroup(group)) {
+            return polkit.Result.NO;
+        }
+    }
+
+    return polkit.Result.NOT_HANDLED;
+});

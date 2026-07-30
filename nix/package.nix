@@ -93,6 +93,9 @@ buildFunction ({
     install -Dm444 assets/systemd/roowho2.service "$out/lib/systemd/system/roowho2.service"
     substituteInPlace "$out/lib/systemd/system/roowho2.service" \
       --replace "/usr/bin/roowhod" "${placeholder "out"}/bin/${mainProgram}"
+
+    install -Dm444 assets/polkit/no.ntnu.pvv.roowho2.policy "$out/share/polkit-1/actions/no.ntnu.pvv.roowho2.policy"
+    install -Dm444 assets/polkit/10-no.ntnu.pvv.roowho2.rules "$out/share/polkit-1/rules.d/10-no.ntnu.pvv.roowho2.rules"
   '';
 
   meta = with lib; {
