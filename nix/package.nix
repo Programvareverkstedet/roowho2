@@ -83,7 +83,17 @@ buildFunction ({
       shell = [ "bash" "zsh" "fish" ];
       command = [ "rwho" "ruptime" "finger" "wall" "write" ];
     };
-  in lib.concatStringsSep "\n" installShellCompletions;
+  in ''
+    ${lib.concatStringsSep "\n" installShellCompletions}
+
+    install -Dm444 assets/systemd/roowho2-audit.socket "$out/lib/systemd/system/roowho2-audit.socket"
+    install -Dm444 assets/systemd/roowho2-client.socket "$out/lib/systemd/system/roowho2-client.socket"
+    install -Dm444 assets/systemd/roowho2-rwhod.socket "$out/lib/systemd/system/roowho2-rwhod.socket"
+
+    install -Dm444 assets/systemd/roowho2.service "$out/lib/systemd/system/roowho2.service"
+    substituteInPlace "$out/lib/systemd/system/roowho2.service" \
+      --replace "/usr/bin/roowhod" "${placeholder "out"}/bin/${mainProgram}"
+  '';
 
   meta = with lib; {
     license = licenses.bsdOriginalUC;
