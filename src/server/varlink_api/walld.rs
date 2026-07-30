@@ -1,10 +1,13 @@
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use nix::unistd::gethostname;
 use serde::{Deserialize, Serialize};
 use zlink::ReplyError;
 
-use crate::server::walld::tty_utils::{self, TtyError};
+use crate::server::{
+    polkit::PolkitAuthority,
+    walld::tty_utils::{self, TtyError},
+};
 
 #[zlink::proxy("no.ntnu.pvv.roowho2.walld")]
 pub trait VarlinkWalldClientProxy {
@@ -162,11 +165,65 @@ fn tty_error_to_walld_error(user: &str, tty: &str, err: TtyError) -> VarlinkWall
     }
 }
 
-// TODO: have the client send the name of the TTY
-//       verify that the TTY is owned by the user from peercred.
+const POLKIT_ACTION_WALL: &str = "no.ntnu.pvv.roowho2.wall";
+const POLKIT_ACTION_WRITE: &str = "no.ntnu.pvv.roowho2.write";
 
+/// Check whether `pid` is allowed to broadcast a `wall` message, optionally restricted to `group`.
+async fn check_wall(
+    polkit: &PolkitAuthority,
+    pid: u32,
+    group: Option<&str>,
+) -> anyhow::Result<bool> {
+    let mut details = HashMap::new();
+    if let Some(group) = group {
+        details.insert("group", group);
+    }
+    polkit.check(pid, POLKIT_ACTION_WALL, details).await
+}
+
+/// Check whether `pid` is allowed to `write` to `user`, optionally on a specific `tty`.
+async fn check_write(
+    polkit: &PolkitAuthority,
+    pid: u32,
+    user: &str,
+    tty: Option<&str>,
+) -> anyhow::Result<bool> {
+    let mut details = HashMap::new();
+    details.insert("user", user);
+    if let Some(tty) = tty {
+        details.insert("tty", tty);
+    }
+    polkit.check(pid, POLKIT_ACTION_WRITE, details).await
+}
+
+/// Wrapper doing some basic error handling against a polkit check.
+async fn authorize<'a, F, Fut>(
+    polkit: Option<&'a PolkitAuthority>,
+    check: F,
+) -> Result<(), VarlinkWalldClientError>
+where
+    F: FnOnce(&'a PolkitAuthority) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<bool>>,
+{
+    let Some(polkit) = polkit else {
+        tracing::error!("polkit authority is unavailable; denying request");
+        return Err(VarlinkWalldClientError::NotAuthorized);
+    };
+
+    match check(polkit).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(VarlinkWalldClientError::NotAuthorized),
+        Err(err) => {
+            tracing::error!("polkit authorization check failed: {err:#}");
+            Err(VarlinkWalldClientError::NotAuthorized)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_wall_request(
-    _source_pid: u32,
+    polkit: Option<&PolkitAuthority>,
+    source_pid: u32,
     source_uid: u32,
     source_tty: Option<String>,
     message: String,
@@ -182,7 +239,10 @@ pub async fn handle_wall_request(
         });
     }
 
-    // TODO: authorize against polkit
+    authorize(polkit, |authority| {
+        check_wall(authority, source_pid, group.as_deref())
+    })
+    .await?;
 
     let body = tty_utils::format_wall_message(
         &username_for_uid(source_uid),
@@ -216,14 +276,18 @@ pub async fn handle_wall_request(
 const DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub async fn handle_write_request(
-    _source_pid: u32,
+    polkit: Option<&PolkitAuthority>,
+    source_pid: u32,
     source_uid: u32,
     source_tty: Option<String>,
     user: String,
     tty: Option<String>,
     message: String,
 ) -> Result<VarlinkWriteResponse, VarlinkWalldClientError> {
-    // TODO: authorize against polkit
+    authorize(polkit, |authority| {
+        check_write(authority, source_pid, &user, tty.as_deref())
+    })
+    .await?;
 
     let sessions = tty_utils::sessions_for_user(&user);
     if sessions.is_empty() {

@@ -13,7 +13,7 @@ use zlink::{
     tokio::unix::{Listener as UnixListener, Stream as UnixStream},
 };
 
-use crate::server::{ignore_list::IgnoreList, rwhod::RwhodStatusStore};
+use crate::server::{ignore_list::IgnoreList, polkit::PolkitAuthority, rwhod::RwhodStatusStore};
 
 pub use crate::server::varlink_api::{fingerd::*, rwhod::*, walld::*};
 
@@ -46,12 +46,13 @@ pub enum VarlinkReplyError {
     Walld(VarlinkWalldClientError),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct VarlinkRoowhoo2ClientServer {
     whod_status_store: RwhodStatusStore,
     rwhod_enabled: bool,
     fingerd_enabled: bool,
     finger_ignore_list: Option<IgnoreList>,
+    polkit: Option<PolkitAuthority>,
 }
 
 impl VarlinkRoowhoo2ClientServer {
@@ -60,12 +61,14 @@ impl VarlinkRoowhoo2ClientServer {
         rwhod_enabled: bool,
         fingerd_enabled: bool,
         finger_ignore_list: Option<IgnoreList>,
+        polkit: Option<PolkitAuthority>,
     ) -> Self {
         Self {
             whod_status_store,
             rwhod_enabled,
             fingerd_enabled,
             finger_ignore_list,
+            polkit,
         }
     }
 }
@@ -283,6 +286,7 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                 let result = match timeout(
                     Duration::from_secs(2),
                     handle_wall_request(
+                        self.polkit.as_ref(),
                         peer_pid,
                         peer_uid,
                         source_tty.clone(),
@@ -329,6 +333,7 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                 let result = match timeout(
                     Duration::from_secs(2),
                     handle_write_request(
+                        self.polkit.as_ref(),
                         peer_pid,
                         peer_uid,
                         source_tty.clone(),
@@ -375,11 +380,28 @@ pub async fn varlink_client_server_task(
     fingerd_enabled: bool,
     finger_ignore_list: Option<IgnoreList>,
 ) -> anyhow::Result<()> {
+    let polkit = match timeout(Duration::from_secs(5), PolkitAuthority::connect()).await {
+        Ok(Ok(polkit)) => Some(polkit),
+        Ok(Err(e)) => {
+            tracing::warn!(
+                "Failed to connect to polkit; Wall/Write requests will be denied: {e:#}"
+            );
+            None
+        }
+        Err(_) => {
+            tracing::warn!(
+                "Timed out connecting to polkit after 5 seconds; Wall/Write requests will be denied"
+            );
+            None
+        }
+    };
+
     let service = VarlinkRoowhoo2ClientServer::new(
         whod_status_store,
         rwhod_enabled,
         fingerd_enabled,
         finger_ignore_list,
+        polkit,
     );
 
     let server = zlink::Server::new(socket, service);
