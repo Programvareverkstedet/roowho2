@@ -23,7 +23,7 @@ nixpkgs.lib.nixosSystem {
 
       boot.kernelParams = [
         "audit=1"
-        "audit_backlog_limit=1024"
+        "audit_backlog_limit=8192"
       ];
 
       users.users.alice.extraGroups = [ "wheel" ];
