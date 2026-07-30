@@ -265,60 +265,21 @@ in {
       };
     };
 
-    systemd.sockets.roowho2-client = {
-      wantedBy = [ "sockets.target" ];
-      description = "Roowho2 Client Communication Socket";
-      listenStreams = [ "/run/roowho2/roowho2.varlink" ];
-      socketConfig = {
-        Service = "roowho2.service";
-        FileDescriptorName = "client_socket";
-      };
-    };
+    systemd.packages = [ cfg.package ];
 
+    systemd.sockets.roowho2-client.wantedBy = lib.mkIf cfg.settings.rwhod.enable [ "sockets.target" ];
     systemd.sockets.roowho2-rwhod = lib.mkIf cfg.settings.rwhod.enable {
       wantedBy = [ "sockets.target" ];
-      description = "Roowho2 Rwhod Socket";
-      listenDatagrams = [ "0.0.0.0:513" ];
-      socketConfig = {
-        Service = "roowho2.service";
-        FileDescriptorName = "rwhod_socket";
-        Broadcast = true;
-      } // cfg.settings.rwhod.socketConfig;
+      inherit (cfg.settings.rwhod) socketConfig;
     };
-
-    systemd.sockets.roowho2-audit = lib.mkIf (cfg.settings.rwhod.enable && cfg.settings.rwhod.realtime_updates) {
-      wantedBy = [ "sockets.target" ];
-      description = "Roowho2 Audit Netlink Socket";
-      unitConfig = {
-        ConditionKernelCommandLine = [
-          "!audit=0"
-          "!audit=off"
-        ];
-      };
-      socketConfig = {
-        Service = "roowho2.service";
-        FileDescriptorName = "audit_socket";
-        ListenNetlink = "audit 1"; # AUDIT_NLGRP_READLOG
-      };
-    };
-
-    # systemd.sockets.roowho2-fingerd = lib.mkIf cfg.settings.fingerd.enable && cfg.settings.fingerd.enableRemoteFinger {
-    #   wantedBy = [ "sockets.target" ];
-    #   description = "Roowho2 Fingerd Socket";
-    #   listenStreams = [ "0.0.0.0:79" ];
-    #   socketConfig = {
-    #     Service = "roowho2.service";
-    #     FileDescriptorName = "fingerd_socket";
-    #   } // cfg.settings.fingerd.socketConfig;
-    # };
+    systemd.sockets.roowho2-audit.wantedBy = lib.mkIf (cfg.settings.rwhod.enable && cfg.settings.rwhod.realtime_updates) [ "sockets.target" ];
+    # systemd.sockets.roowho2-fingerd.wantedBy = lib.mkIf cfg.settings.fingerd.enable [ "sockets.target" ];
 
     systemd.services.roowho2 = {
-      # rwhod needs the network devices to be available for enumeration before starting.
-      after = lib.mkIf cfg.settings.rwhod.enable  [ "network-online.target" ];
-      wants = lib.mkIf cfg.settings.rwhod.enable  [ "network-online.target" ];
+      # Override the dbus system bus address to be where we bind-mounted it in the chroot.
+      environment.DBUS_SYSTEM_BUS_ADDRESS = "unix:path=/run/dbus/system_bus_socket";
 
       serviceConfig = {
-        Type = "notify";
         ExecStart = let
           configFile = lib.pipe cfg.settings [
             (lib.filterAttrsRecursive (n: v: v != null))
@@ -328,55 +289,9 @@ in {
             })
             (format.generate "roowho2-config.toml")
           ];
-        in "${lib.getExe' cfg.package "roowhod"} --config ${configFile}";
-        Restart = "on-failure";
-        DynamicUser = true;
-
-        ConfigurationDirectory = [ "roowho2" ];
-
-        # NOTE: roowho2 might at some point need to read from home directories
-        #       to get user settings, so let's keep these disabled for now.
-        # PrivateUsers = true;
-        # ProtectHome = true;
-
-        # NOTE: We need this capability to be able to read inside the home directories of users without
-        #       them needing to open their homedirs to the rest of the system.
-        AmbientCapabilities = [ "CAP_DAC_READ_SEARCH" ];
-        CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
-        DeviceAllow = "";
-        DevicePolicy = "closed";
-        LockPersonality = true;
-        MemoryDenyWriteExecute = true;
-        NoNewPrivileges = true;
-        PrivateDevices = true;
-        # NOTE: all ipc traffic is served through the socket activation fds or provided by systemd
-        PrivateIPC = true;
-        PrivateMounts = true;
-        PrivateTmp = true;
-        ProcSubset = "pid";
-        ProtectClock = true;
-        ProtectControlGroups = "strict";
-        ProtectHostname = true;
-        ProtectKernelLogs = true;
-        ProtectKernelModules = true;
-        ProtectKernelTunables = true;
-        ProtectProc = "invisible";
-        RemoveIPC = true;
-        RestrictAddressFamilies = [
-          "AF_INET"
-          "AF_INET6"
-          "AF_UNIX"
-          "AF_NETLINK"
-        ];
-        RestrictNamespaces = true;
-        RestrictRealtime = true;
-        RestrictSUIDSGID = true;
-        SocketBindDeny = "any";
-        SystemCallArchitectures = "native";
-        SystemCallFilter = [
-          "@system-service"
-          "~@privileged"
-          "~@resources"
+        in [
+         ""
+         "${lib.getExe' cfg.package "roowhod"} --config ${configFile}"
         ];
 
         RuntimeDirectory = "roowho2/root-mnt";
@@ -388,6 +303,9 @@ in {
 
           # NOTE: need logind socket for utmp entries
           "/run/systemd"
+
+          # NOTE: need dbus socket for polkit authorization
+          "-/run/dbus/system_bus_socket"
 
           "/home"
 
@@ -403,8 +321,6 @@ in {
         ] ++ lib.optionals cfg.settings.fingerd.enable [
           cfg.settings.fingerd.ignore_list_path
         ]);
-
-        UMask = "0077";
       };
     };
 
