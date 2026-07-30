@@ -190,6 +190,12 @@ in {
             #   };
             # };
           };
+
+          walld = {
+            enable = lib.mkEnableOption "the walld service" // {
+              default = true;
+            };
+          };
         };
       };
       default = { };

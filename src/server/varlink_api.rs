@@ -51,6 +51,7 @@ pub struct VarlinkRoowhoo2ClientServer {
     whod_status_store: RwhodStatusStore,
     rwhod_enabled: bool,
     fingerd_enabled: bool,
+    walld_enabled: bool,
     finger_ignore_list: Option<IgnoreList>,
     polkit: Option<PolkitAuthority>,
 }
@@ -60,6 +61,7 @@ impl VarlinkRoowhoo2ClientServer {
         whod_status_store: RwhodStatusStore,
         rwhod_enabled: bool,
         fingerd_enabled: bool,
+        walld_enabled: bool,
         finger_ignore_list: Option<IgnoreList>,
         polkit: Option<PolkitAuthority>,
     ) -> Self {
@@ -67,6 +69,7 @@ impl VarlinkRoowhoo2ClientServer {
             whod_status_store,
             rwhod_enabled,
             fingerd_enabled,
+            walld_enabled,
             finger_ignore_list,
             polkit,
         }
@@ -280,7 +283,14 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                 nobanner,
                 timeout_secs,
             }) => {
-                // TODO: add walld toggle to config
+                if !self.walld_enabled {
+                    return (
+                        MethodReply::Error(VarlinkReplyError::Walld(
+                            VarlinkWalldClientError::Disabled,
+                        )),
+                        Default::default(),
+                    );
+                }
 
                 // TODO: ensure the outer duration is more than the inner duration.
                 let result = match timeout(
@@ -329,7 +339,15 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
                 target_tty,
                 message,
             }) => {
-                // TODO: add walld toggle to config
+                if !self.walld_enabled {
+                    return (
+                        MethodReply::Error(VarlinkReplyError::Walld(
+                            VarlinkWalldClientError::Disabled,
+                        )),
+                        Default::default(),
+                    );
+                }
+
                 let result = match timeout(
                     Duration::from_secs(2),
                     handle_write_request(
@@ -378,21 +396,26 @@ pub async fn varlink_client_server_task(
     whod_status_store: RwhodStatusStore,
     rwhod_enabled: bool,
     fingerd_enabled: bool,
+    walld_enabled: bool,
     finger_ignore_list: Option<IgnoreList>,
 ) -> anyhow::Result<()> {
-    let polkit = match timeout(Duration::from_secs(5), PolkitAuthority::connect()).await {
-        Ok(Ok(polkit)) => Some(polkit),
-        Ok(Err(e)) => {
-            tracing::warn!(
-                "Failed to connect to polkit; Wall/Write requests will be denied: {e:#}"
-            );
-            None
-        }
-        Err(_) => {
-            tracing::warn!(
-                "Timed out connecting to polkit after 5 seconds; Wall/Write requests will be denied"
-            );
-            None
+    let polkit = if !walld_enabled {
+        None
+    } else {
+        match timeout(Duration::from_secs(5), PolkitAuthority::connect()).await {
+            Ok(Ok(polkit)) => Some(polkit),
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    "Failed to connect to polkit; Wall/Write requests will be denied: {e:#}"
+                );
+                None
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "Timed out connecting to polkit after 5 seconds; Wall/Write requests will be denied"
+                );
+                None
+            }
         }
     };
 
@@ -400,6 +423,7 @@ pub async fn varlink_client_server_task(
         whod_status_store,
         rwhod_enabled,
         fingerd_enabled,
+        walld_enabled,
         finger_ignore_list,
         polkit,
     );

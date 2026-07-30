@@ -138,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
         whod_status_store.clone(),
         config.rwhod.enable,
         config.fingerd.enable,
+        config.walld.enable,
         finger_ignore_list,
         client_server_token,
     ));
@@ -201,6 +202,7 @@ async fn client_server(
     whod_status_store: RwhodStatusStore,
     rwhod_enabled: bool,
     fingerd_enabled: bool,
+    walld_enabled: bool,
     finger_ignore_list: Option<IgnoreList>,
     startup_token: CancellationToken,
 ) -> anyhow::Result<()> {
@@ -214,6 +216,7 @@ async fn client_server(
         whod_status_store,
         rwhod_enabled,
         fingerd_enabled,
+        walld_enabled,
         finger_ignore_list,
     );
 

@@ -21,6 +21,9 @@ pub struct Config {
     /// Configuration for the fingerd server.
     pub fingerd: FingerdConfig,
 
+    /// Configuration for the walld server.
+    pub walld: WalldConfig,
+
     /// Path to the Unix domain socket for client-server communication.
     ///
     /// If left as `None`, the server expects to be served a file descriptor to the socket named 'client'.
@@ -114,4 +117,10 @@ pub struct FingerdConfig {
 
     /// Path to the ignore list for users that should be hidden from fingerd.
     pub ignore_list_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WalldConfig {
+    /// Enable or disable the walld server functionality.
+    pub enable: bool,
 }
