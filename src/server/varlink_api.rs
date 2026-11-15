@@ -137,6 +137,7 @@ impl zlink::Service<UnixStream> for VarlinkRoowhoo2ClientServer {
         Vec<OwnedFd>,
     )>;
     type ReplyStreamError = ();
+    type Upgrade = ();
 
     async fn handle<'service>(
         &'service mut self,

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use anyhow::Context;
-use zbus::{Connection, proxy, zvariant::Value};
+use zbus::{Connection, OwnedObjectPath, Variant, proxy};
 
 #[proxy(
     default_service = "org.freedesktop.PolicyKit1",
@@ -14,7 +14,7 @@ trait Authority {
     #[allow(clippy::type_complexity)]
     fn check_authorization(
         &self,
-        subject: &(&str, HashMap<&str, Value<'_>>),
+        subject: &(&str, HashMap<&str, Variant<'_>>),
         action_id: &str,
         details: &HashMap<&str, &str>,
         flags: u32,
@@ -29,7 +29,7 @@ trait Authority {
 )]
 trait LoginManager {
     #[zbus(name = "GetSessionByPID")]
-    fn get_session_by_pid(&self, pid: u32) -> zbus::Result<zbus::zvariant::OwnedObjectPath>;
+    fn get_session_by_pid(&self, pid: u32) -> zbus::Result<OwnedObjectPath>;
 }
 
 #[proxy(interface = "org.freedesktop.login1.Session")]
@@ -61,7 +61,6 @@ impl PolkitAuthority {
         let path = manager.get_session_by_pid(pid).await.ok()?;
         let session = LoginSessionProxy::builder(&self.connection)
             .path(path)
-            .ok()?
             .build()
             .await
             .ok()?;
@@ -72,17 +71,17 @@ impl PolkitAuthority {
     async fn subject(
         &self,
         pid: u32,
-    ) -> anyhow::Result<(&'static str, HashMap<&'static str, Value<'_>>)> {
+    ) -> anyhow::Result<(&'static str, HashMap<&'static str, Variant<'_>>)> {
         if let Some(session_id) = self.session_id_for_pid(pid).await {
             let mut details = HashMap::new();
-            details.insert("session-id", Value::from(session_id));
+            details.insert("session-id", Variant::from(session_id));
             return Ok(("unix-session", details));
         }
 
         let start_time = process_start_time(pid)?;
         let mut details = HashMap::new();
-        details.insert("pid", Value::from(pid));
-        details.insert("start-time", Value::from(start_time));
+        details.insert("pid", Variant::from(pid));
+        details.insert("start-time", Variant::from(start_time));
         Ok(("unix-process", details))
     }
 

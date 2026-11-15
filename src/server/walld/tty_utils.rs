@@ -302,9 +302,9 @@ pub async fn deliver_message(
         }
     };
 
-    let async_fd = AsyncFd::new(fd).map_err(|source| TtyError::Io {
+    let async_fd = unsafe { AsyncFd::register(fd) }.map_err(|err| TtyError::Io {
         path: path.display().to_string(),
-        source,
+        source: err.into(),
     })?;
 
     let write_all = async {
