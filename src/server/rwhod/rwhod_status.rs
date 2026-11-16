@@ -17,7 +17,7 @@ pub fn generate_rwhod_user_entries(
     now: DateTime<Utc>,
     ignore_list: Option<&IgnoreList>,
 ) -> anyhow::Result<Vec<WhodUserEntry>> {
-    Utmpx::iter_all_records()
+    let result = Utmpx::iter_all_records()
         .filter(|entry| entry.is_user_process())
         .filter(|entry| {
             !ignore_list.is_some_and(|ignore_list| ignore_list.ignores_username(&entry.user()))
@@ -49,17 +49,23 @@ pub fn generate_rwhod_user_entries(
                 idle_time,
             ))
         })
-        .collect()
+        .filter_map(|result: anyhow::Result<WhodUserEntry>| {
+            result
+                .inspect_err(|err| tracing::warn!("Skipping utmp entry: {err:#}"))
+                .ok()
+        })
+        .collect();
+    Ok(result)
 }
 
 /// Generate a rwhod status update packet representing the current system state.
 pub fn generate_rwhod_status_update(
     ignore_list: Option<&IgnoreList>,
 ) -> anyhow::Result<WhodStatusUpdate> {
-    let sysinfo = sysinfo().unwrap();
+    let sysinfo = sysinfo()?;
     let load_average = sysinfo.load_average();
     let uptime = sysinfo.uptime();
-    let hostname = gethostname()?.to_str().unwrap().to_string();
+    let hostname = gethostname()?.to_string_lossy().into_owned();
     let now = Utc::now().with_nanosecond(0).unwrap_or(Utc::now());
 
     let result = WhodStatusUpdate::new(

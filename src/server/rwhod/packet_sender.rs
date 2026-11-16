@@ -184,13 +184,23 @@ pub async fn rwhod_packet_sender_task(
             }
         }
 
-        let status_update = generate_rwhod_status_update(ignore_list.as_ref())?;
+        let status_update = match generate_rwhod_status_update(ignore_list.as_ref()) {
+            Ok(status_update) => status_update,
+            Err(e) => {
+                tracing::error!("Failed to generate rwhod status update: {e:#}");
+                continue;
+            }
+        };
 
         tracing::debug!("Generated rwhod packet: {:?}", status_update);
 
-        let packet = status_update
-            .try_into()
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        let packet = match status_update.try_into() {
+            Ok(packet) => packet,
+            Err(e) => {
+                tracing::error!("Failed to convert rwhod status update to packet: {e}");
+                continue;
+            }
+        };
 
         for interface in &interfaces {
             if let Err(e) = send_rwhod_packet_to_interface(socket.clone(), interface, &packet).await
