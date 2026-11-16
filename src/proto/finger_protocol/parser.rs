@@ -74,23 +74,22 @@ pub fn try_parse_structured_user_entry_from_raw_finger_response(
 
 fn parse_full_name(first_line: &str, username: &str) -> anyhow::Result<String> {
     Ok(first_line
-        .split("Name:")
-        .nth(1)
+        .split_once("Name:")
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "Failed to parse full name from finger response for user {}",
                 username
             )
         })?
+        .1
         .trim()
         .to_string())
 }
 
 fn parse_home_dir(second_line: &str, username: &str) -> anyhow::Result<PathBuf> {
     second_line
-        .split("Directory:")
-        .nth(1)
-        .and_then(|s| s.split("Shell:").next())
+        .split_once("Directory:")
+        .and_then(|(_, s)| s.split("Shell:").next())
         .map(|s| s.trim())
         .map(PathBuf::from)
         .ok_or_else(|| {
@@ -103,9 +102,8 @@ fn parse_home_dir(second_line: &str, username: &str) -> anyhow::Result<PathBuf> 
 
 fn parse_shell(second_line: &str, username: &str) -> anyhow::Result<PathBuf> {
     second_line
-        .split("Shell:")
-        .nth(1)
-        .map(|s| s.trim())
+        .split_once("Shell:")
+        .map(|(_, s)| s.trim())
         .map(PathBuf::from)
         .ok_or_else(|| {
             anyhow::anyhow!(
