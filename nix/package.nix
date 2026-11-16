@@ -13,6 +13,9 @@
 , cargoToml
 , cargoLock
 , src
+, commitHash
+, commitDate
+, commitIsDirty
 
 , useCrane ? false
 , craneLib ? null
@@ -68,6 +71,12 @@ buildFunction ({
   inherit src;
 
   RUSTFLAGS = "-Zhigher-ranked-assumptions";
+
+  env = {
+    GIT_COMMIT = commitHash;
+    GIT_COMMIT_DATE = commitDate;
+    GIT_DIRTY = lib.boolToString commitIsDirty;
+  };
 
   buildInputs = [
     zstd

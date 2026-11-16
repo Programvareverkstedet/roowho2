@@ -1,6 +1,11 @@
 use clap::crate_version;
 
 const fn long_version() -> &'static str {
+    const DIRTY_SUFFIX: &str = match env!("GIT_DIRTY").as_bytes() {
+        b"true" => " (dirty)",
+        _ => "",
+    };
+
     // macro_rules! feature {
     //     ($title:expr, $flag:expr) => {
     //         if cfg!(feature = $flag) {
@@ -19,6 +24,10 @@ const fn long_version() -> &'static str {
         "\n",
         "commit: ",
         env!("GIT_COMMIT"),
+        DIRTY_SUFFIX,
+        "\n",
+        "commit date: ",
+        env!("GIT_COMMIT_DATE"),
         "\n\n",
         // "[features]\n",
         // "\n",

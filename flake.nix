@@ -100,16 +100,21 @@
         rustc = pkgs.rust-bin.nightly.latest.minimal;
         cargo = pkgs.rust-bin.nightly.latest.minimal;
       };
+
+      inherit (self) sourceInfo;
+      commitHash = sourceInfo.rev or (lib.substring 0 40 sourceInfo.dirtyRev);
+      commitDate = "${lib.substring 0 4 sourceInfo.lastModifiedDate}-${lib.substring 4 2 sourceInfo.lastModifiedDate}-${lib.substring 6 2 sourceInfo.lastModifiedDate}";
+      commitIsDirty = sourceInfo ? dirtyRev;
     in {
       default = self.packages.${system}.roowho2-crane;
 
       roowho2 = pkgs.callPackage ./nix/package.nix {
-        inherit cargoToml cargoLock src rustPlatform;
+        inherit cargoToml cargoLock src rustPlatform commitHash commitDate commitIsDirty;
       };
 
       roowho2-crane = pkgs.callPackage ./nix/package.nix {
         useCrane = true;
-        inherit cargoToml cargoLock src craneLib;
+        inherit cargoToml cargoLock src craneLib commitHash commitDate commitIsDirty;
       };
 
       filteredSource = pkgs.runCommandLocal "filtered-source" { } ''

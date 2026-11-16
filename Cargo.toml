@@ -50,6 +50,7 @@ const_format = "0.2.37"
 [build-dependencies]
 anyhow = "1.0.104"
 build-info-build = "0.0.47"
+chrono = "0.4.45"
 git2 = "0.21.0"
 
 [dev-dependencies]
