@@ -208,12 +208,8 @@ impl Whod {
 
         let mut wd_we = array::from_fn(|_| Whoent::zeroed());
 
-        for (byte_chunk, whoent) in bytes
-            .as_chunks::<{ Whoent::SIZE }>()
-            .0
-            .iter()
-            .zip(wd_we.iter_mut())
-        {
+        let mut slots = wd_we.iter_mut();
+        for byte_chunk in bytes.as_chunks::<{ Whoent::SIZE }>().0 {
             let mut chunk_bytes = bytes::Bytes::copy_from_slice(byte_chunk);
 
             let mut out_line = [0u8; Outmp::MAX_TTY_NAME_LEN];
@@ -229,7 +225,14 @@ impl Whod {
             };
             let we_idle = chunk_bytes.get_i32();
 
-            *whoent = Whoent { we_utmp, we_idle };
+            let whoent = Whoent { we_utmp, we_idle };
+
+            if whoent.is_zeroed() {
+                continue;
+            }
+            if let Some(slot) = slots.next() {
+                *slot = whoent;
+            }
         }
 
         let result = Whod::new(
@@ -558,6 +561,19 @@ mod tests {
         invalid_type_bytes[0] = Whod::WHODVERSION;
         invalid_type_bytes[1] = 99; // invalid type
         assert!(Whod::from_bytes(&invalid_type_bytes).is_err());
+    }
+
+    #[test]
+    fn test_parser_skips_zeroed_whoent() {
+        let mut bytes = vec![0u8; Whod::HEADER_SIZE + 2 * Whoent::SIZE];
+        bytes[0] = Whod::WHODVERSION;
+        bytes[1] = Whod::WHODTYPE_STATUS;
+        // first entry is all zeroes, second has username 'a'
+        bytes[Whod::HEADER_SIZE + Whoent::SIZE + Outmp::MAX_TTY_NAME_LEN] = b'a';
+
+        let whod = Whod::from_bytes(&bytes).expect("Parsing from bytes failed");
+        assert_eq!(whod.wd_we[0].we_utmp.out_name[0], b'a');
+        assert!(whod.wd_we[1].is_zeroed());
     }
 
     #[test]
