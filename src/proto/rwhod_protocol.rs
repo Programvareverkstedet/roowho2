@@ -457,7 +457,7 @@ impl TryFrom<WhodStatusUpdate> for Whod {
     fn try_from(value: WhodStatusUpdate) -> Result<Self, Self::Error> {
         let mut wd_hostname = [0u8; Whod::MAX_HOSTNAME_LEN];
         let hostname_bytes = value.hostname.as_bytes();
-        let hostname_len = hostname_bytes.len().min(Whod::MAX_HOSTNAME_LEN);
+        let hostname_len = hostname_bytes.len().min(Whod::MAX_HOSTNAME_LEN - 1);
         wd_hostname[..hostname_len].copy_from_slice(&hostname_bytes[..hostname_len]);
 
         let wd_sendtime = encode_rwhod_timestamp(value.sendtime);
@@ -661,12 +661,14 @@ mod tests {
         );
 
         let whod_struct = Whod::try_from(status_update.clone()).expect("Conversion to Whod failed");
+        assert_eq!(whod_struct.wd_hostname[Whod::MAX_HOSTNAME_LEN - 1], 0);
+
         let converted_back =
             WhodStatusUpdate::try_from(whod_struct).expect("Conversion from Whod failed");
 
         assert_eq!(
             converted_back.hostname,
-            long_hostname[..Whod::MAX_HOSTNAME_LEN].to_string()
+            long_hostname[..Whod::MAX_HOSTNAME_LEN - 1].to_string()
         );
     }
 
