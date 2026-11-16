@@ -1,5 +1,8 @@
 use chrono::{TimeZone, Utc};
-use std::path::{Path, PathBuf};
+use std::{
+    os::unix::fs::MetadataExt,
+    path::{Path, PathBuf},
+};
 
 use crate::proto::finger_protocol::MailStatus;
 
@@ -38,6 +41,10 @@ pub fn detect_new_mail_for_user(
 fn detect_new_mail_by_mailbox(mailbox_path: &Path) -> anyhow::Result<MailStatus> {
     let stat = nix::sys::stat::stat(mailbox_path)?;
 
+    if stat.st_size == 0 {
+        return Ok(MailStatus::NoMail);
+    }
+
     let mail_recv = stat.st_mtime;
     let mail_read = stat.st_atime;
 
@@ -65,29 +72,45 @@ fn detect_new_mail_by_maildir(maildir_path: &Path) -> anyhow::Result<MailStatus>
     let new_mail_path = maildir_path.join("new");
     let cur_mail_path = maildir_path.join("cur");
 
-    let mail_recv = nix::sys::stat::stat(&new_mail_path)?.st_mtime;
-    let mail_read = nix::sys::stat::stat(&cur_mail_path)?.st_mtime;
+    let new_mail_times = maildir_message_mtimes(&new_mail_path)?;
 
-    if new_mail_path.read_dir()?.next().is_none() && cur_mail_path.read_dir()?.next().is_none() {
-        Ok(MailStatus::NoMail)
-    } else if mail_recv > mail_read {
-        Ok(MailStatus::NewMailReceived {
+    if let (Some(&oldest), Some(&newest)) =
+        (new_mail_times.iter().min(), new_mail_times.iter().max())
+    {
+        return Ok(MailStatus::NewMailReceived {
             received_time: Utc
-                .timestamp_opt(mail_recv, 0)
+                .timestamp_opt(newest, 0)
                 .single()
                 .unwrap_or_else(Default::default),
             unread_since: Utc
-                .timestamp_opt(mail_read, 0)
+                .timestamp_opt(oldest, 0)
                 .single()
                 .unwrap_or_else(Default::default),
-        })
-    } else {
-        Ok(MailStatus::MailLastRead(
-            Utc.timestamp_opt(mail_read, 0)
-                .single()
-                .unwrap_or_else(Default::default),
-        ))
+        });
     }
+
+    if maildir_message_mtimes(&cur_mail_path)?.is_empty() {
+        return Ok(MailStatus::NoMail);
+    }
+
+    let mail_read = nix::sys::stat::stat(&cur_mail_path)?.st_mtime;
+
+    Ok(MailStatus::MailLastRead(
+        Utc.timestamp_opt(mail_read, 0)
+            .single()
+            .unwrap_or_else(Default::default),
+    ))
+}
+
+/// Returns mtimes of messages in a maildir subdirectory (`new/` or `cur/`).
+fn maildir_message_mtimes(dir: &Path) -> anyhow::Result<Vec<i64>> {
+    Ok(dir
+        .read_dir()?
+        .filter_map(Result::ok)
+        .filter(|entry| !entry.file_name().as_encoded_bytes().starts_with(b"."))
+        .filter_map(|entry| entry.metadata().ok())
+        .map(|metadata| metadata.mtime())
+        .collect())
 }
 
 #[cfg(test)]
@@ -150,6 +173,18 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_new_mail_by_mailbox_empty_is_no_mail() {
+        let tempdir = TempDir::new().unwrap();
+        let mailbox = tempdir.path().join("Mailbox");
+        fs::write(&mailbox, b"").unwrap();
+        set_file_times(&mailbox, 1_700_000_000, 1_700_000_100);
+
+        let status = detect_new_mail_by_mailbox(&mailbox).unwrap();
+
+        assert_eq!(status, MailStatus::NoMail);
+    }
+
+    #[test]
     fn test_detect_new_mail_by_maildir_no_mail() {
         let tempdir = TempDir::new().unwrap();
         let maildir = tempdir.path().join("Maildir");
@@ -171,9 +206,13 @@ mod tests {
         let cur_dir = maildir.join("cur");
         fs::create_dir_all(&new_dir).unwrap();
         fs::create_dir_all(&cur_dir).unwrap();
-        fs::write(new_dir.join("msg"), b"mail").unwrap();
-        set_dir_mtime(&cur_dir, 1_700_000_000);
-        set_dir_mtime(&new_dir, 1_700_000_100);
+        fs::write(new_dir.join("msg1"), b"mail").unwrap();
+        fs::write(new_dir.join("msg2"), b"mail").unwrap();
+        set_file_times(&new_dir.join("msg1"), 1_700_000_000, 1_700_000_000);
+        set_file_times(&new_dir.join("msg2"), 1_700_000_100, 1_700_000_100);
+        // `cur` being newer than `new` should not hide unread mail
+        set_dir_mtime(&new_dir, 1_700_000_000);
+        set_dir_mtime(&cur_dir, 1_700_000_200);
 
         let status = detect_new_mail_by_maildir(&maildir).unwrap();
 
@@ -184,6 +223,42 @@ mod tests {
                 unread_since: Utc.timestamp_opt(1_700_000_000, 0).single().unwrap(),
             }
         );
+    }
+
+    #[test]
+    fn test_detect_new_mail_by_maildir_empty_new_with_newer_mtime() {
+        let tempdir = TempDir::new().unwrap();
+        let maildir = tempdir.path().join("Maildir");
+        let new_dir = maildir.join("new");
+        let cur_dir = maildir.join("cur");
+        fs::create_dir_all(&new_dir).unwrap();
+        fs::create_dir_all(&cur_dir).unwrap();
+        fs::write(cur_dir.join("msg"), b"mail").unwrap();
+        set_dir_mtime(&cur_dir, 1_700_000_000);
+        set_dir_mtime(&new_dir, 1_700_000_100);
+
+        let status = detect_new_mail_by_maildir(&maildir).unwrap();
+
+        assert_eq!(
+            status,
+            MailStatus::MailLastRead(Utc.timestamp_opt(1_700_000_000, 0).single().unwrap())
+        );
+    }
+
+    #[test]
+    fn test_detect_new_mail_by_maildir_ignores_dotfiles() {
+        let tempdir = TempDir::new().unwrap();
+        let maildir = tempdir.path().join("Maildir");
+        let new_dir = maildir.join("new");
+        let cur_dir = maildir.join("cur");
+        fs::create_dir_all(&new_dir).unwrap();
+        fs::create_dir_all(&cur_dir).unwrap();
+        fs::write(new_dir.join(".hidden"), b"").unwrap();
+        fs::write(cur_dir.join(".hidden"), b"").unwrap();
+
+        let status = detect_new_mail_by_maildir(&maildir).unwrap();
+
+        assert_eq!(status, MailStatus::NoMail);
     }
 
     #[test]
