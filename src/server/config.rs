@@ -2,6 +2,8 @@ use std::{collections::HashSet, path::PathBuf, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
+use crate::server::rwhod::IpRange;
+
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/roowho2/config.toml";
 
 /// Default interval between rwhod status packet broadcasts.
@@ -50,6 +52,11 @@ pub struct RwhodConfig {
     ///
     /// If left as `None`, the server will send on all relevant interfaces it can find.
     pub interfaces: Option<HashSet<String>>,
+
+    /// Interface addresses / address spaces to not send rwhod packets from.
+    /// Specified as single addresses (e.g. `"192.168.0.10"`) or CIDR networks (e.g. `"10.0.0.0/8"`).
+    #[serde(default)]
+    pub excluded_addresses: Vec<IpRange>,
 
     /// Interval between rwhod status packet broadcasts.
     ///

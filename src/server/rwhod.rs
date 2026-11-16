@@ -1,10 +1,12 @@
 mod audit_watcher;
+mod ip_range;
 mod packet_receiver;
 mod packet_sender;
 mod rwhod_status;
 mod status_registry;
 
 pub use audit_watcher::audit_change_notifier;
+pub use ip_range::{IpRange, IpRangeParseError};
 pub use packet_receiver::rwhod_packet_receiver_task;
 pub use packet_sender::{determine_relevant_interfaces, rwhod_packet_sender_task};
 pub use rwhod_status::{generate_rwhod_status_update, generate_rwhod_user_entries};

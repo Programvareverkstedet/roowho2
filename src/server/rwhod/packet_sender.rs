@@ -1,4 +1,4 @@
-use nix::{ifaddrs::getifaddrs, net::if_::InterfaceFlags};
+use nix::{ifaddrs::getifaddrs, net::if_::InterfaceFlags, sys::socket::SockaddrStorage};
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -12,7 +12,10 @@ use tokio::{
 
 use crate::{
     proto::Whod,
-    server::{ignore_list::IgnoreList, rwhod::rwhod_status::generate_rwhod_status_update},
+    server::{
+        ignore_list::IgnoreList,
+        rwhod::{IpRange, rwhod_status::generate_rwhod_status_update},
+    },
 };
 
 /// Default port for rwhod communication.
@@ -38,12 +41,23 @@ fn ipv4_broadcast_address(address: Ipv4Addr, netmask: Ipv4Addr) -> Ipv4Addr {
     Ipv4Addr::from(u32::from(address) | !u32::from(netmask))
 }
 
+/// Extracts the IP address from a socket address
+fn sockaddr_ip(addr: &SockaddrStorage) -> Option<IpAddr> {
+    addr.as_sockaddr_in()
+        .map(|sa| IpAddr::V4(sa.ip()))
+        .or_else(|| addr.as_sockaddr_in6().map(|sa| IpAddr::V6(sa.ip())))
+}
+
 /// Find all networks network interfaces suitable for rwhod communication.
 ///
 /// If `allowed_interfaces` is `Some`, only interfaces whose name is contained
 /// in it are considered; otherwise all suitable interfaces are returned.
+///
+/// Interface addresses contained in any of the `excluded_addresses` ranges
+/// are skipped.
 pub fn determine_relevant_interfaces(
     allowed_interfaces: Option<&HashSet<String>>,
+    excluded_addresses: &[IpRange],
 ) -> anyhow::Result<Vec<RwhodSendTarget>> {
     getifaddrs().map_err(|e| e.into()).map(|ifaces| {
         ifaces
@@ -60,6 +74,23 @@ pub fn determine_relevant_interfaces(
                 allowed_interfaces
                     .is_none_or(|allowed| allowed.contains(iface.interface_name.as_str()))
             })
+            // interface address must not be in the configured exclude list
+            .filter(|iface| {
+                let Some(local_addr) = iface.address.as_ref().and_then(sockaddr_ip) else {
+                    return true;
+                };
+                let excluded = excluded_addresses
+                    .iter()
+                    .any(|range| range.contains(local_addr));
+                if excluded {
+                    tracing::debug!(
+                        "Skipping excluded address {} on interface {}",
+                        local_addr,
+                        iface.interface_name
+                    );
+                }
+                !excluded
+            })
             .filter_map(|iface| {
                 let neighbor_addr = if iface.flags.contains(InterfaceFlags::IFF_BROADCAST) {
                     match (
@@ -72,11 +103,7 @@ pub fn determine_relevant_interfaces(
                         _ => None,
                     }
                 } else if iface.flags.contains(InterfaceFlags::IFF_POINTOPOINT) {
-                    iface.destination.and_then(|addr| {
-                        addr.as_sockaddr_in()
-                            .map(|sa| IpAddr::V4(sa.ip()))
-                            .or_else(|| addr.as_sockaddr_in6().map(|sa| IpAddr::V6(sa.ip())))
-                    })
+                    iface.destination.as_ref().and_then(sockaddr_ip)
                 } else {
                     None
                 };
@@ -208,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_determine_relevant_interfaces() {
-        let interfaces = determine_relevant_interfaces(None).unwrap();
+        let interfaces = determine_relevant_interfaces(None, &[]).unwrap();
         for interface in interfaces {
             println!("Interface: {} Address: {}", interface.name, interface.addr);
         }
@@ -217,7 +244,14 @@ mod tests {
     #[test]
     fn test_determine_relevant_interfaces_with_allowlist_excludes_unlisted() {
         let allowed = HashSet::from(["definitely-not-a-real-interface".to_string()]);
-        let interfaces = determine_relevant_interfaces(Some(&allowed)).unwrap();
+        let interfaces = determine_relevant_interfaces(Some(&allowed), &[]).unwrap();
+        assert!(interfaces.is_empty());
+    }
+
+    #[test]
+    fn test_determine_relevant_interfaces_with_catchall_exclude_list() {
+        let excluded = ["0.0.0.0/0".parse().unwrap(), "::/0".parse().unwrap()];
+        let interfaces = determine_relevant_interfaces(None, &excluded).unwrap();
         assert!(interfaces.is_empty());
     }
 }

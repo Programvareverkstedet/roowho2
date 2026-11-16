@@ -61,6 +61,20 @@ in {
               '';
             };
 
+            excluded_addresses = lib.mkOption {
+              type = with lib.types; listOf str;
+              default = [ ];
+              example = [
+                "10.0.0.0/8"
+                "192.168.1.5"
+                "fd00::/8"
+              ];
+              description = ''
+                List of interface addresses to never broadcast rwhod packets from,
+                given either as single addresses or as networks in CIDR notation.
+              '';
+            };
+
             send_interval_seconds = lib.mkOption {
               type = lib.types.ints.positive;
               default = 60;

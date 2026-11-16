@@ -1,9 +1,8 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
     path::PathBuf,
     sync::Arc,
-    time::Duration,
 };
 
 use anyhow::Context;
@@ -15,7 +14,7 @@ use tracing_subscriber::layer::SubscriberExt;
 
 use roowho2_lib::{
     server::{
-        config::{DEFAULT_CONFIG_PATH, LogLevel},
+        config::{DEFAULT_CONFIG_PATH, LogLevel, RwhodConfig},
         ignore_list::IgnoreList,
         rwhod::{
             RwhodStatusRegistry, RwhodStatusStore, rwhod_packet_receiver_task,
@@ -120,9 +119,7 @@ async fn main() -> anyhow::Result<()> {
             socket,
             whod_status_store.clone(),
             rwhod_ignore_list.clone(),
-            config.rwhod.interfaces.clone(),
-            config.rwhod.send_interval(),
-            config.rwhod.realtime_updates_enabled(),
+            config.rwhod.clone(),
             audit_socket,
         ));
     } else {
@@ -160,18 +157,18 @@ async fn rwhod_server(
     socket: UdpSocket,
     whod_status_store: RwhodStatusStore,
     ignore_list: Option<IgnoreList>,
-    allowed_interfaces: Option<HashSet<String>>,
-    send_interval: Duration,
-    realtime_updates_enabled: bool,
+    config: RwhodConfig,
     audit_socket: Option<OwnedFd>,
 ) -> anyhow::Result<()> {
     let socket = Arc::new(socket);
 
-    let interfaces =
-        roowho2_lib::server::rwhod::determine_relevant_interfaces(allowed_interfaces.as_ref())?;
+    let interfaces = roowho2_lib::server::rwhod::determine_relevant_interfaces(
+        config.interfaces.as_ref(),
+        &config.excluded_addresses,
+    )?;
 
     let (tx, rx) = tokio::sync::mpsc::channel(1);
-    match (realtime_updates_enabled, audit_socket) {
+    match (config.realtime_updates_enabled(), audit_socket) {
         (true, Some(fd)) => {
             tokio::spawn(roowho2_lib::server::rwhod::audit_change_notifier(tx, fd));
         }
@@ -185,8 +182,13 @@ async fn rwhod_server(
         (false, _) => {}
     }
 
-    let sender_task =
-        rwhod_packet_sender_task(socket.clone(), interfaces, ignore_list, send_interval, rx);
+    let sender_task = rwhod_packet_sender_task(
+        socket.clone(),
+        interfaces,
+        ignore_list,
+        config.send_interval(),
+        rx,
+    );
     let receiver_task = rwhod_packet_receiver_task(socket.clone(), whod_status_store);
 
     tokio::select! {
