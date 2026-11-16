@@ -350,9 +350,8 @@ impl TryFrom<Whoent> for WhodUserEntry {
             .iter()
             .copied()
             .take_while(|&c| c != 0)
-            .collect();
-        let tty = String::from_utf8(tty_bytes)
-            .map_err(|e| format!("Invalid UTF-8 in TTY name: {}", e))?;
+            .collect::<Vec<u8>>();
+        let tty = String::from_utf8_lossy(&tty_bytes).into_owned();
 
         let user_id_bytes = value
             .we_utmp
@@ -360,9 +359,8 @@ impl TryFrom<Whoent> for WhodUserEntry {
             .iter()
             .copied()
             .take_while(|&c| c != 0)
-            .collect();
-        let user_id = String::from_utf8(user_id_bytes)
-            .map_err(|e| format!("Invalid UTF-8 in user ID: {}", e))?;
+            .collect::<Vec<u8>>();
+        let user_id = String::from_utf8_lossy(&user_id_bytes).into_owned();
 
         let now = Utc::now();
         let login_time = decode_rwhod_timestamp_near_time(value.we_utmp.out_time, now)?;
@@ -399,9 +397,8 @@ impl TryFrom<Whod> for WhodStatusUpdate {
             .iter()
             .copied()
             .take_while(|&c| c != 0)
-            .collect();
-        let hostname = String::from_utf8(hostname_bytes)
-            .map_err(|e| format!("Invalid UTF-8 in hostname: {}", e))?;
+            .collect::<Vec<u8>>();
+        let hostname = String::from_utf8_lossy(&hostname_bytes).into_owned();
 
         let users = value
             .wd_we
@@ -631,8 +628,9 @@ mod tests {
         whoent.we_utmp.out_time = 1_700_000_000; // Some valid timestamp
         whoent.we_idle = 60; // 1 minute
 
-        let result = WhodUserEntry::try_from(whoent);
-        assert!(result.is_err());
+        let entry = WhodUserEntry::try_from(whoent).expect("Invalid UTF-8 should be read lossily");
+        assert_eq!(entry.tty, "\u{fffd}\u{fffd}\u{fffd}");
+        assert_eq!(entry.user_id, "\u{fffd}\u{fffd}\u{fffd}");
     }
 
     #[test]
