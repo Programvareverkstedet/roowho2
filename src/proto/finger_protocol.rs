@@ -1,5 +1,6 @@
 mod classic_formatter;
 mod parser;
+mod time_parser;
 
 use std::path::PathBuf;
 
