@@ -40,6 +40,10 @@ pub struct Args {
     #[arg(value_name = "MESSAGE | FILE")]
     file_or_message: Option<String>,
 
+    /// Print verbose output
+    #[arg(long, short)]
+    verbose: bool,
+
     /// Generate shell completion scripts for the specified shell
     /// and print them to stdout.
     #[arg(long, value_enum, hide = true)]
@@ -89,14 +93,21 @@ async fn main() -> anyhow::Result<()> {
             }
         })?;
 
-    for failure in &response.failures {
-        eprintln!(
-            "wall: could not reach {} on {}: {}",
-            failure.user, failure.tty, failure.reason
-        );
+    if args.verbose {
+        for failure in &response.failures {
+            eprintln!(
+                "wall: could not reach {} on {}: {}",
+                failure.user, failure.tty, failure.reason
+            );
+        }
     }
 
     if !response.failures.is_empty() && response.delivered.is_empty() {
+        if !args.verbose {
+            eprintln!(
+                "wall: could not deliver message to any terminal (use --verbose for details)"
+            );
+        }
         std::process::exit(1);
     }
 
