@@ -10,6 +10,23 @@ use crate::proto::finger_protocol::{
     FingerResponseStructuredUserEntry, FingerResponseUserSession, MailStatus, RawFingerResponse,
 };
 
+const MAX_YEARS_BACK: i32 = 10;
+
+/// Find the closest year, starting at `current_year` going backwards,
+/// in which `month`/`day` falls on `weekday`.
+fn guess_year_from_weekday(
+    weekday: Weekday,
+    month: u32,
+    day: u32,
+    current_year: i32,
+) -> Option<i32> {
+    (0..=MAX_YEARS_BACK)
+        .map(|offset| current_year - offset)
+        .find(|&year| {
+            NaiveDate::from_ymd_opt(year, month, day).is_some_and(|d| d.weekday() == weekday)
+        })
+}
+
 /// Parse the time serialization format commonly used by bsd-finger
 fn parse_bsd_finger_time(time: &str) -> anyhow::Result<DateTime<Utc>> {
     let time_parts: Vec<_> = time.split_ascii_whitespace().collect();
@@ -69,33 +86,15 @@ fn parse_bsd_finger_time(time: &str) -> anyhow::Result<DateTime<Utc>> {
         )
     })?;
 
-    let now = Utc::now();
-    const MAX_YEARS_BACK: i32 = 10;
-    let mut year = None;
-    for offset in 0..=MAX_YEARS_BACK {
-        let year_ = now.year() - offset;
-
-        let date = match NaiveDate::from_ymd_opt(year_, month, day) {
-            Some(d) => d,
-            None => continue,
-        };
-
-        if date.weekday() != weekday {
-            continue;
-        }
-
-        year = Some(year_);
-    }
-
-    if year.is_none() {
-        return Err(anyhow::anyhow!(
+    let year = guess_year_from_weekday(weekday, month, day, Utc::now().year()).ok_or_else(|| {
+        anyhow::anyhow!(
             "Could not find a valid year for login time {} within {} years",
             time_,
             MAX_YEARS_BACK
-        ));
-    }
+        )
+    })?;
 
-    tz.with_ymd_and_hms(year.unwrap(), month, day, clock.hour(), clock.minute(), 0)
+    tz.with_ymd_and_hms(year, month, day, clock.hour(), clock.minute(), 0)
         .single()
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -550,6 +549,27 @@ mod tests {
                 input
             );
         }
+    }
+
+    #[test]
+    fn test_guess_year_from_weekday_picks_most_recent_year() {
+        // Mar 1 is Sunday for both 2026 and 2020.
+        assert_eq!(
+            guess_year_from_weekday(Weekday::Sun, 3, 1, 2026),
+            Some(2026)
+        );
+        // Jun 15 is Monday for both 2026 and 2020.
+        assert_eq!(
+            guess_year_from_weekday(Weekday::Mon, 6, 15, 2025),
+            Some(2020)
+        );
+        // Feb 29 only exists in leap years. Mon Feb 29 was in 2016.
+        assert_eq!(
+            guess_year_from_weekday(Weekday::Mon, 2, 29, 2026),
+            Some(2016)
+        );
+        // Feb 30 doesn't exist.
+        assert_eq!(guess_year_from_weekday(Weekday::Mon, 2, 30, 2026), None);
     }
 
     #[test]
