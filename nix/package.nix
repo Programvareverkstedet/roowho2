@@ -4,8 +4,11 @@
 , stdenv
 , buildPackages
 , installShellFiles
+, pkg-config
 , versionCheckHook
 , systemdLibs
+, zstd
+, libgit2
 
 , cargoToml
 , cargoLock
@@ -66,11 +69,17 @@ buildFunction ({
 
   RUSTFLAGS = "-Zhigher-ranked-assumptions";
 
-  buildInputs = lib.optionals stdenv.hostPlatform.isLinux [
+  buildInputs = [
+    zstd
+    libgit2
+  ] ++ lib.optionals stdenv.hostPlatform.isLinux [
     systemdLibs
   ];
 
-  nativeBuildInputs = [ installShellFiles ];
+  nativeBuildInputs = [
+    installShellFiles
+    pkg-config
+  ];
   postInstall = let
     emulator = stdenv.hostPlatform.emulator buildPackages;
     installShellCompletions = lib.mapCartesianProduct ({ shell, command }: ''
