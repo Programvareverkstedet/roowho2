@@ -22,12 +22,19 @@ fn guess_year_from_weekday(
 
 /// Parse the time serialization format commonly used by bsd-finger
 pub(super) fn parse_bsd_finger_time(time: &str) -> anyhow::Result<DateTime<Utc>> {
+    parse_bsd_finger_time_at(time, Utc::now())
+}
+
+/// Testable variant of [`parse_bsd_finger_time`].
+fn parse_bsd_finger_time_at(time: &str, now: DateTime<Utc>) -> anyhow::Result<DateTime<Utc>> {
     let time_parts: Vec<_> = time.split_ascii_whitespace().collect();
 
-    let time_ = &time_parts[..time_parts.len() - 1].join(" ");
-    let timezone = time_parts[time_parts.len() - 1]
-        .trim_start_matches('(')
-        .trim_end_matches(')');
+    let Some((timezone, time_parts)) = time_parts.split_last() else {
+        anyhow::bail!("Empty login time");
+    };
+
+    let time_ = &time_parts.join(" ");
+    let timezone = timezone.trim_start_matches('(').trim_end_matches(')');
 
     let tz: chrono_tz::Tz = timezone
         .parse()
@@ -79,14 +86,13 @@ pub(super) fn parse_bsd_finger_time(time: &str) -> anyhow::Result<DateTime<Utc>>
         )
     })?;
 
-    let year =
-        guess_year_from_weekday(weekday, month, day, Utc::now().year()).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Could not find a valid year for login time {} within {} years",
-                time_,
-                MAX_YEARS_BACK
-            )
-        })?;
+    let year = guess_year_from_weekday(weekday, month, day, now.year()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Could not find a valid year for login time {} within {} years",
+            time_,
+            MAX_YEARS_BACK
+        )
+    })?;
 
     tz.with_ymd_and_hms(year, month, day, clock.hour(), clock.minute(), 0)
         .single()
@@ -139,22 +145,49 @@ pub(super) fn parse_user_session_idle_time(str: &str) -> anyhow::Result<Duration
 mod tests {
     use super::*;
 
+    fn fixed_now() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 11, 16, 12, 0, 0).unwrap()
+    }
+
     #[test]
     fn test_parse_bsd_finger_time() {
-        let cases = vec![
-            "Mon Mar  1 10:00 (UTC)",
-            "Tue Feb 28 23:59 (UTC)",
-            "Wed Dec 31 00:00 (UTC)",
-            "Wed Dec 31 00:00 (GMT)",
-            "Wed Dec 31 00:00 (Asia/Tokyo)",
+        let cases = [
+            ("Mon Mar  1 10:00 (UTC)", (2021, 3, 1, 10, 0)),
+            ("Tue Feb 28 23:59 (UTC)", (2023, 2, 28, 23, 59)),
+            ("Wed Dec 31 00:00 (UTC)", (2025, 12, 31, 0, 0)),
+            ("Wed Dec 31 00:00 (GMT)", (2025, 12, 31, 0, 0)),
+            ("Wed Dec 31 00:00 (Asia/Tokyo)", (2025, 12, 30, 15, 0)),
+        ];
+
+        for (input, (y, mo, d, h, mi)) in cases {
+            let expected = Utc.with_ymd_and_hms(y, mo, d, h, mi, 0).unwrap();
+            let datetime = parse_bsd_finger_time_at(input, fixed_now())
+                .unwrap_or_else(|e| panic!("Failed to parse datetime for input {input:?}: {e}"));
+            assert_eq!(datetime, expected, "Wrong datetime for input {input:?}");
+        }
+    }
+
+    #[test]
+    fn test_parse_bsd_finger_time_errors_on_bad_input() {
+        let cases = [
+            "",
+            "   ",
+            "(UTC)",
+            "Mon (UTC)",
+            "Mon Mar (UTC)",
+            "Mon Mar  1 (UTC)",
+            "Mon Mar  1 10:00",
+            "Foo Mar  1 10:00 (UTC)",
+            "Mon Foo  1 10:00 (UTC)",
+            "Mon Mar 32 10:00 (UTC)",
+            "Mon Mar  1 25:00 (UTC)",
+            "Mon Mar  1 10:00 (Not/AZone)",
         ];
 
         for input in cases {
-            let datetime = parse_bsd_finger_time(input);
             assert!(
-                datetime.is_ok(),
-                "Failed to parse datetime for input: {}",
-                input
+                parse_bsd_finger_time_at(input, fixed_now()).is_err(),
+                "Expected error for input {input:?}"
             );
         }
     }
