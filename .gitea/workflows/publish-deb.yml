@@ -41,10 +41,8 @@ jobs:
       matrix:
         os: [
           debian-trixie,
-          debian-bookworm,
-          ubuntu-resolute,
           ubuntu-noble,
-          ubuntu-jammy,
+          ubuntu-resolute,
         ]
     name: Build and publish for ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
