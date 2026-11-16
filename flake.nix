@@ -29,8 +29,8 @@
       };
 
       rust-bin = rust-overlay.lib.mkRustBin { } pkgs.buildPackages;
-      toolchain = rust-bin.nightly.latest.default.override {
-        extensions = [ "rust-src" ];
+      toolchain = rust-bin.nightly.latest.minimal.override {
+        extensions = [ "rust-src" "clippy" "rustfmt" ];
       };
     in f system pkgs toolchain);
   in {
@@ -83,9 +83,9 @@
 
     packages = forAllSystems (system: pkgs: _:
       let
-      cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+      cargoToml = fromTOML (builtins.readFile ./Cargo.toml);
       cargoLock = ./Cargo.lock;
-      craneLib = (crane.mkLib pkgs).overrideToolchain(p: p.rust-bin.nightly.latest.default);
+      craneLib = (crane.mkLib pkgs).overrideToolchain(p: p.rust-bin.nightly.latest.minimal);
 
       src = lib.fileset.toSource {
         root = ./.;
@@ -97,8 +97,8 @@
       };
 
       rustPlatform = pkgs.makeRustPlatform {
-        rustc = pkgs.rust-bin.nightly.latest.default;
-        cargo = pkgs.rust-bin.nightly.latest.cargo;
+        rustc = pkgs.rust-bin.nightly.latest.minimal;
+        cargo = pkgs.rust-bin.nightly.latest.minimal;
       };
     in {
       default = self.packages.${system}.roowho2-crane;
