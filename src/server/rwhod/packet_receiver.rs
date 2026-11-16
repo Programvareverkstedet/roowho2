@@ -29,14 +29,16 @@ pub async fn rwhod_packet_receiver_task(
         }
 
         let result = Whod::from_bytes(&buf[..len])
-            .context("Failed to parse whod packet")?
-            .try_into()
-            .map(|mut status_update: WhodStatusUpdate| {
+            .context("Failed to parse whod packet")
+            .and_then(|whod| {
+                WhodStatusUpdate::try_from(whod)
+                    .map_err(|e| anyhow::anyhow!("Invalid whod packet: {}", e))
+            })
+            .map(|mut status_update| {
                 let timestamp = Utc::now().with_nanosecond(0).unwrap_or(Utc::now());
                 status_update.recvtime = Some(timestamp);
                 status_update
-            })
-            .map_err(|e| anyhow::anyhow!("Invalid whod packet: {}", e));
+            });
 
         match result {
             Ok(status_update) => {
@@ -64,7 +66,7 @@ pub async fn rwhod_packet_receiver_task(
                 store.upsert(status_update);
             }
             Err(err) => {
-                tracing::error!("Error processing whod packet from {src}: {err}");
+                tracing::error!("Error processing whod packet from {src}: {err:#}");
             }
         }
     }
