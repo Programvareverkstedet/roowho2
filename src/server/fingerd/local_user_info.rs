@@ -1,12 +1,14 @@
 use std::{
+    fs::OpenOptions,
+    io::{self, Read},
     net::hostname,
-    os::unix::fs::{MetadataExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::Path,
 };
 
 use chrono::{DateTime, Duration, Timelike, Utc};
 use itertools::Itertools;
-use nix::sys::stat::stat;
+use nix::{libc, sys::stat::stat, unistd::Uid};
 use users::all_users;
 use uucore::utmpx::{Utmpx, UtmpxRecord};
 
@@ -97,28 +99,54 @@ pub fn finger_utmp_users(
         .collect()
 }
 
-/// Helper function to read the content of a file if it exists and is readable,
-/// returning None if the file does not exist or is not readable.
-fn read_file_content_if_exists(path: &Path) -> anyhow::Result<Option<String>> {
-    let file_is_readable = path.exists()
-        && path.is_file()
-        && (((path.metadata()?.permissions().mode() & 0o400 != 0
-            && nix::unistd::geteuid().as_raw() == path.metadata()?.uid())
-            || (path.metadata()?.permissions().mode() & 0o040 != 0
-                && nix::unistd::getegid().as_raw() == path.metadata()?.gid())
-            || (path.metadata()?.permissions().mode() & 0o004 != 0))
-            || caps::has_cap(
-                None,
-                caps::CapSet::Effective,
-                caps::Capability::CAP_DAC_READ_SEARCH,
-            )?)
-        && path.metadata()?.len() > 0;
+/// Max number of bytes read from a user's dotfile (.plan, .project, etc.).
+const MAX_USER_FILE_SIZE: u64 = 64 * 1024;
 
-    if file_is_readable {
-        Ok(Some(std::fs::read_to_string(path)?.trim().to_string()))
-    } else {
-        Ok(None)
+/// Read a dotfile from a user's home directory, if it should be shown.
+///
+/// The daemon typically runs with CAP_DAC_READ_SEARCH, so all permission
+/// checks need to be done manually. Following checks should be done:
+///
+/// - it is not a symlink
+/// - it is a regular file (i.e. not FIFO or device or whatnot)
+/// - it is owned by `owner`
+fn read_user_file(path: &Path, owner: Uid) -> anyhow::Result<Option<String>> {
+    let file = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(err) => {
+            if err.kind() != io::ErrorKind::NotFound {
+                tracing::debug!("Not reading {}: {}", path.display(), err);
+            }
+            return Ok(None);
+        }
+    };
+
+    let metadata = file.metadata()?;
+    if !metadata.file_type().is_file() {
+        tracing::debug!("Not reading {}: it's not a regular file", path.display());
+        return Ok(None);
     }
+    if metadata.uid() != owner.as_raw() {
+        tracing::debug!(
+            "Not reading {}: owned by uid {}, expected {}",
+            path.display(),
+            metadata.uid(),
+            owner
+        );
+        return Ok(None);
+    }
+    if metadata.len() == 0 {
+        return Ok(None);
+    }
+
+    let mut content = Vec::new();
+    file.take(MAX_USER_FILE_SIZE).read_to_end(&mut content)?;
+
+    Ok(Some(String::from_utf8_lossy(&content).trim().to_string()))
 }
 
 /// Retrieve local user information for the given username.
@@ -233,17 +261,19 @@ fn get_local_user(
 
     let email_status = local_email::detect_new_mail_for_user(&username, &home_dir)?;
 
+    let uid = user_entry.uid;
+
     let forward_path = user_entry.dir.join(".forward");
-    let forward = read_file_content_if_exists(&forward_path)?;
+    let forward = read_user_file(&forward_path, uid)?;
 
     let pgpkey_path = user_entry.dir.join(".pgpkey");
-    let pgpkey = read_file_content_if_exists(&pgpkey_path)?;
+    let pgpkey = read_user_file(&pgpkey_path, uid)?;
 
     let project_path = user_entry.dir.join(".project");
-    let project = read_file_content_if_exists(&project_path)?;
+    let project = read_user_file(&project_path, uid)?;
 
     let plan_path = user_entry.dir.join(".plan");
-    let plan = read_file_content_if_exists(&plan_path)?;
+    let plan = read_user_file(&plan_path, uid)?;
 
     Ok(Some(FingerResponseStructuredUserEntry::new(
         username,
@@ -280,6 +310,98 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(user_entry.username, "root");
+    }
+
+    mod read_user_file {
+        use std::{
+            fs::{self, Permissions},
+            os::unix::fs::{PermissionsExt, symlink},
+            path::PathBuf,
+        };
+
+        use nix::{sys::stat::Mode, unistd::getuid};
+        use tempfile::TempDir;
+
+        use super::super::read_user_file;
+
+        fn write_file(dir: &TempDir, name: &str, content: &[u8], mode: u32) -> PathBuf {
+            let path = dir.path().join(name);
+            fs::write(&path, content).unwrap();
+            fs::set_permissions(&path, Permissions::from_mode(mode)).unwrap();
+            path
+        }
+
+        #[test]
+        fn accepts_world_readable_file_owned_by_user() {
+            let dir = TempDir::new().unwrap();
+            let path = write_file(&dir, ".plan", b"  my plan\n", 0o644);
+
+            let content = read_user_file(&path, getuid()).unwrap();
+            assert_eq!(content, Some("my plan".to_string()));
+        }
+
+        #[test]
+        fn missing_file_is_none() {
+            let dir = TempDir::new().unwrap();
+            let content = read_user_file(&dir.path().join(".plan"), getuid()).unwrap();
+            assert_eq!(content, None);
+        }
+
+        #[test]
+        fn empty_file_is_none() {
+            let dir = TempDir::new().unwrap();
+            let path = write_file(&dir, ".plan", b"", 0o644);
+            assert_eq!(read_user_file(&path, getuid()).unwrap(), None);
+        }
+
+        #[test]
+        fn rejects_symlinks() {
+            let dir = TempDir::new().unwrap();
+            let target = write_file(&dir, "secret", b"secret", 0o644);
+            let link = dir.path().join(".plan");
+            symlink(&target, &link).unwrap();
+
+            assert_eq!(read_user_file(&link, getuid()).unwrap(), None);
+        }
+
+        #[test]
+        fn rejects_file_owned_by_other_user() {
+            let dir = TempDir::new().unwrap();
+            let path = write_file(&dir, ".plan", b"plan", 0o644);
+            let other_uid = nix::unistd::Uid::from_raw(getuid().as_raw().wrapping_add(1));
+
+            assert_eq!(read_user_file(&path, other_uid).unwrap(), None);
+        }
+
+        #[test]
+        fn accepts_non_world_readable_file() {
+            let dir = TempDir::new().unwrap();
+            let path = write_file(&dir, ".plan", b"plan", 0o600);
+            assert_eq!(
+                read_user_file(&path, getuid()).unwrap(),
+                Some("plan".to_string())
+            );
+        }
+
+        #[test]
+        fn rejects_fifo() {
+            let dir = TempDir::new().unwrap();
+            let path = dir.path().join(".plan");
+            nix::unistd::mkfifo(&path, Mode::from_bits_truncate(0o644)).unwrap();
+            fs::set_permissions(&path, Permissions::from_mode(0o644)).unwrap();
+
+            assert_eq!(read_user_file(&path, getuid()).unwrap(), None);
+        }
+
+        #[test]
+        fn rejects_directory() {
+            let dir = TempDir::new().unwrap();
+            let path = dir.path().join(".plan");
+            fs::create_dir(&path).unwrap();
+            fs::set_permissions(&path, Permissions::from_mode(0o755)).unwrap();
+
+            assert_eq!(read_user_file(&path, getuid()).unwrap(), None);
+        }
     }
 
     // TODO: test serialization roundtrip
