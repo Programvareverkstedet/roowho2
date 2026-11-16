@@ -1,0 +1,13 @@
+log_level = "info"
+
+[fingerd]
+enable = true
+ignore_list_path = "/etc/roowho2/fingerd-ignore-list"
+
+[rwhod]
+enable = true
+send_interval_seconds = 60
+ignore_list_path = "/etc/roowho2/rwhod-ignore-list"
+
+[walld]
+enable = false
