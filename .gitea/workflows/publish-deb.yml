@@ -19,12 +19,13 @@ on:
         options:
           # NOTE: we are using unstable features
           # - stable
+          # - beta
           - nightly
-          - beta
         default: nightly
 
 env:
   BINSTALL_DISABLE_TELEMETRY: 'true'
+  RUSTFLAGS: '-Zhigher-ranked-assumptions'
   SYSTEM_DEPS: >-
     build-essential
     pkg-config
