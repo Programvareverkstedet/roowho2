@@ -28,7 +28,7 @@ pub async fn rwhod_packet_receiver_task(
             continue;
         }
 
-        let result = Whod::from_bytes(&buf[..len])
+        let result = Whod::from_bytes(buf.get(..len).unwrap_or_default())
             .context("Failed to parse whod packet")
             .and_then(|whod| {
                 WhodStatusUpdate::try_from(whod)

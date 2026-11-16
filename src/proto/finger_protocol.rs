@@ -39,10 +39,9 @@ impl FingerRequest {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        let (long, name) = if &bytes[..3] == b"/W " {
-            (true, &bytes[3..])
-        } else {
-            (false, bytes)
+        let (long, name) = match bytes.strip_prefix(b"/W ") {
+            Some(name) => (true, name),
+            None => (false, bytes),
         };
 
         let name = match name.strip_suffix(b"\r\n") {

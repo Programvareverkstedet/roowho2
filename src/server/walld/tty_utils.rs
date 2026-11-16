@@ -312,7 +312,8 @@ pub async fn deliver_message(
         while written < message.len() {
             let mut guard = async_fd.writable().await?;
             match guard.try_io(|inner| {
-                unistd::write(inner.get_ref(), &message[written..]).map_err(Error::from)
+                unistd::write(inner.get_ref(), message.get(written..).unwrap_or_default())
+                    .map_err(Error::from)
             }) {
                 Ok(Ok(n)) => written += n,
                 Ok(Err(e)) => return Err(e),

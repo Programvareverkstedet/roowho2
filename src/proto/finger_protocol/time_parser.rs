@@ -177,8 +177,7 @@ pub(super) fn parse_user_session_idle_time(str: &str) -> anyhow::Result<Duration
 
     let parts: Vec<&str> = str.split_whitespace().collect();
     let mut i = 0;
-    while i < parts.len() {
-        let value_str = parts[i];
+    while let Some(value_str) = parts.get(i) {
         let unit_str = parts
             .get(i + 1)
             .ok_or_else(|| anyhow::anyhow!("Missing time unit in idle time string: {}", str))?;

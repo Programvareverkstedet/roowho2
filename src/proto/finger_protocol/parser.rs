@@ -14,15 +14,12 @@ pub fn try_parse_structured_user_entry_from_raw_finger_response(
     let content = response.get_inner();
     let lines: Vec<&str> = content.lines().collect();
 
-    if lines.len() < 2 {
+    let [first_line, second_line, ..] = lines[..] else {
         return Err(anyhow::anyhow!(
             "Unexpected finger response format for user {}",
             username
         ));
-    }
-
-    let first_line = lines[0];
-    let second_line = lines[1];
+    };
 
     let full_name = parse_full_name(first_line, &username)?;
     let home_dir = parse_home_dir(second_line, &username)?;
@@ -32,7 +29,9 @@ pub fn try_parse_structured_user_entry_from_raw_finger_response(
 
     let (office, office_phone, home_phone) = parse_gecos_fields(&lines, &mut current_index)?;
 
-    let never_logged_in = lines[current_index].trim() == "Never logged in.";
+    let never_logged_in = lines
+        .get(current_index)
+        .is_some_and(|line| line.trim() == "Never logged in.");
 
     let user_sessions = if never_logged_in {
         current_index += 1;
@@ -51,7 +50,7 @@ pub fn try_parse_structured_user_entry_from_raw_finger_response(
         current_index == lines.len(),
         "Not all lines in finger response were parsed for user {}. Unparsed lines: {:?}",
         username,
-        &lines[current_index..]
+        lines.get(current_index..)
     );
 
     Ok(FingerResponseStructuredUserEntry::new(
@@ -192,8 +191,9 @@ fn parse_user_sessions(
 pub fn parse_user_session(line: &str) -> anyhow::Result<FingerResponseUserSession> {
     let parts: Vec<&str> = line.split_whitespace().collect();
 
-    debug_assert!(parts[0] == "On");
-    debug_assert!(parts[1] == "since");
+    if !parts.starts_with(&["On", "since"]) {
+        anyhow::bail!("Finger session is missing 'On since': {line}");
+    }
 
     let login_time_str = parts
         .iter()

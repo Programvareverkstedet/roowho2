@@ -139,9 +139,9 @@ impl Whod {
         buf.put_i32(self.wd_sendtime);
         buf.put_i32(self.wd_recvtime);
         buf.put_slice(&self.wd_hostname);
-        buf.put_i32(self.wd_loadav[0]);
-        buf.put_i32(self.wd_loadav[1]);
-        buf.put_i32(self.wd_loadav[2]);
+        for loadav in self.wd_loadav {
+            buf.put_i32(loadav);
+        }
         buf.put_i32(self.wd_boottime);
 
         for whoent in self.wd_we.iter().take_while(|entry| !entry.is_zeroed()) {
@@ -341,22 +341,24 @@ impl TryFrom<Whoent> for WhodUserEntry {
     type Error = String;
 
     fn try_from(value: Whoent) -> Result<Self, Self::Error> {
-        let tty_end = value
+        let tty_bytes = value
             .we_utmp
             .out_line
             .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(value.we_utmp.out_line.len());
-        let tty = String::from_utf8(value.we_utmp.out_line[..tty_end].to_vec())
+            .copied()
+            .take_while(|&c| c != 0)
+            .collect();
+        let tty = String::from_utf8(tty_bytes)
             .map_err(|e| format!("Invalid UTF-8 in TTY name: {}", e))?;
 
-        let user_id_end = value
+        let user_id_bytes = value
             .we_utmp
             .out_name
             .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(value.we_utmp.out_name.len());
-        let user_id = String::from_utf8(value.we_utmp.out_name[..user_id_end].to_vec())
+            .copied()
+            .take_while(|&c| c != 0)
+            .collect();
+        let user_id = String::from_utf8(user_id_bytes)
             .map_err(|e| format!("Invalid UTF-8 in user ID: {}", e))?;
 
         let now = Utc::now();
@@ -389,12 +391,13 @@ impl TryFrom<Whod> for WhodStatusUpdate {
             recvtime,
         } = decode_rwhod_timestamps(value.wd_boottime, value.wd_sendtime, value.wd_recvtime, now)?;
 
-        let hostname_end = value
+        let hostname_bytes = value
             .wd_hostname
             .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(value.wd_hostname.len());
-        let hostname = String::from_utf8(value.wd_hostname[..hostname_end].to_vec())
+            .copied()
+            .take_while(|&c| c != 0)
+            .collect();
+        let hostname = String::from_utf8(hostname_bytes)
             .map_err(|e| format!("Invalid UTF-8 in hostname: {}", e))?;
 
         let users = value
@@ -424,14 +427,14 @@ impl TryFrom<WhodUserEntry> for Whoent {
 
     fn try_from(value: WhodUserEntry) -> Result<Self, Self::Error> {
         let mut out_line = [0u8; Outmp::MAX_TTY_NAME_LEN];
-        let tty_bytes = value.tty.as_bytes();
-        let tty_len = tty_bytes.len().min(Outmp::MAX_TTY_NAME_LEN);
-        out_line[..tty_len].copy_from_slice(&tty_bytes[..tty_len]);
+        for (dst, src) in out_line.iter_mut().zip(value.tty.as_bytes()) {
+            *dst = *src;
+        }
 
         let mut out_name = [0u8; Outmp::MAX_USER_ID_LEN];
-        let user_id_bytes = value.user_id.as_bytes();
-        let user_id_len = user_id_bytes.len().min(Outmp::MAX_USER_ID_LEN);
-        out_name[..user_id_len].copy_from_slice(&user_id_bytes[..user_id_len]);
+        for (dst, src) in out_name.iter_mut().zip(value.user_id.as_bytes()) {
+            *dst = *src;
+        }
 
         let out_time = encode_rwhod_timestamp(value.login_time);
 
@@ -456,9 +459,13 @@ impl TryFrom<WhodStatusUpdate> for Whod {
 
     fn try_from(value: WhodStatusUpdate) -> Result<Self, Self::Error> {
         let mut wd_hostname = [0u8; Whod::MAX_HOSTNAME_LEN];
-        let hostname_bytes = value.hostname.as_bytes();
-        let hostname_len = hostname_bytes.len().min(Whod::MAX_HOSTNAME_LEN - 1);
-        wd_hostname[..hostname_len].copy_from_slice(&hostname_bytes[..hostname_len]);
+        for (dst, src) in wd_hostname
+            .iter_mut()
+            .take(Whod::MAX_HOSTNAME_LEN - 1)
+            .zip(value.hostname.as_bytes())
+        {
+            *dst = *src;
+        }
 
         let wd_sendtime = encode_rwhod_timestamp(value.sendtime);
         let wd_recvtime = value.recvtime.map_or(0, encode_rwhod_timestamp);
