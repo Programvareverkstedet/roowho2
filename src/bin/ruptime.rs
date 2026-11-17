@@ -148,8 +148,8 @@ fn sort_entries(
                 .partial_cmp(&load2)
                 .unwrap_or(std::cmp::Ordering::Equal)
         } else if sort_by_time {
-            let uptime1 = Utc::now() - entry1.sendtime;
-            let uptime2 = Utc::now() - entry2.sendtime;
+            let uptime1 = Utc::now() - entry1.boot_time;
+            let uptime2 = Utc::now() - entry2.boot_time;
             uptime1.cmp(&uptime2)
         } else if sort_by_users {
             let users1 = entry1.users.len();
