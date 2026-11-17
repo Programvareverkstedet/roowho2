@@ -177,7 +177,12 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     if let Some(shell) = args.completions {
-        generate(shell, &mut Args::command(), "rwho", &mut std::io::stdout());
+        generate(
+            shell,
+            &mut Args::command(),
+            "finger",
+            &mut std::io::stdout(),
+        );
         return Ok(());
     }
 
