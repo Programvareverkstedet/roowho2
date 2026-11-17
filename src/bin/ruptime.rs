@@ -176,10 +176,10 @@ fn old_format_machine_entry(entry: &WhodStatusUpdate, uptime_timeout_minutes: u3
     let hours = uptime.num_hours() % 24;
     let minutes = uptime.num_minutes() % 60;
 
-    let uptime_str = if days > 0 {
-        format!("{:3}+{:02}:{:02}", days, hours, minutes)
-    } else if uptime.num_seconds() < 0 || days > 999 {
+    let uptime_str = if uptime.num_seconds() < 0 || days > 999 {
         "    ??:??".to_string()
+    } else if days > 0 {
+        format!("{:3}+{:02}:{:02}", days, hours, minutes)
     } else {
         format!("    {:2}:{:02}", hours, minutes)
     };
