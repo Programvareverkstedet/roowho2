@@ -250,7 +250,7 @@ impl Whod {
 
 // ------------------------------------------------
 
-/// Load average representation: (5 min, 10 min, 15 min)
+/// Load average representation: (1 min, 5 min, 15 min)
 /// All values are multiplied by 100.
 pub type LoadAverage = (i32, i32, i32);
 
@@ -272,7 +272,7 @@ pub struct WhodStatusUpdate {
     /// Name of the host sending the status update (max 32 characters)
     pub hostname: String,
 
-    /// load average over 5, 10, and 15 minutes multiplied by 100
+    /// load average over 1, 5, and 15 minutes multiplied by 100
     pub load_average: LoadAverage,
 
     /// Which time the system was booted
