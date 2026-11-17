@@ -404,11 +404,7 @@ impl TryFrom<Whod> for WhodStatusUpdate {
             .wd_we
             .iter()
             .take_while(|whoent| !whoent.is_zeroed())
-            .map(|whoent| {
-                let mut user = WhodUserEntry::try_from(whoent.clone())?;
-                user.login_time = decode_rwhod_timestamp_near_time(whoent.we_utmp.out_time, now)?;
-                Ok(user)
-            })
+            .map(|whoent| WhodUserEntry::try_from(whoent.clone()))
             .collect::<Result<Vec<WhodUserEntry>, String>>()?;
 
         Ok(WhodStatusUpdate {
