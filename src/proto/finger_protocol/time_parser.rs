@@ -178,6 +178,18 @@ pub(super) fn parse_user_session_idle_time(str: &str) -> anyhow::Result<Duration
     let parts: Vec<&str> = str.split_whitespace().collect();
     let mut i = 0;
     while let Some(value_str) = parts.get(i) {
+        if let Some((hours, minutes)) = value_str.split_once(':') {
+            let hours: i64 = hours.parse().map_err(|e| {
+                anyhow::anyhow!("Failed to parse hours from idle time {}: {}", str, e)
+            })?;
+            let minutes: i64 = minutes.parse().map_err(|e| {
+                anyhow::anyhow!("Failed to parse minutes from idle time {}: {}", str, e)
+            })?;
+            total_duration += Duration::hours(hours) + Duration::minutes(minutes);
+            i += 1;
+            continue;
+        }
+
         let unit_str = parts
             .get(i + 1)
             .ok_or_else(|| anyhow::anyhow!("Missing time unit in idle time string: {}", str))?;
@@ -291,6 +303,8 @@ mod tests {
                 1 * 24 * 60 * 60 + 5 * 60 * 60 + 30 * 60,
             ),
             ("1 day 1 second", 1 * 24 * 60 * 60 + 1),
+            ("5:07", 5 * 60 * 60 + 7 * 60),
+            ("2 days 0:30", 2 * 24 * 60 * 60 + 30 * 60),
         ];
 
         for (input, expected_seconds) in cases {

@@ -219,13 +219,24 @@ pub fn parse_user_session(line: &str) -> anyhow::Result<FingerResponseUserSessio
         None => (tty_loc, None),
     };
 
-    let idle_str = parts
-        .iter()
-        .skip(host_loc + 1)
-        .take_while(|&&x| x != "idle")
-        .join(" ")
-        .trim_end_matches("(messages off)")
-        .to_string();
+    let idle_str = if parts.get(tty_loc + 1) == Some(&"idle") {
+        // FreeBSD finger: "on pts/0, idle 1 day 5:00, from host"
+        parts
+            .iter()
+            .skip(tty_loc + 2)
+            .take_while(|&&x| x != "from" && x != "(messages")
+            .join(" ")
+            .trim_end_matches(',')
+            .to_string()
+    } else {
+        parts
+            .iter()
+            .skip(host_loc + 1)
+            .take_while(|&&x| x != "idle")
+            .join(" ")
+            .trim_end_matches("(messages off)")
+            .to_string()
+    };
 
     let idle_time = if idle_str.is_empty() {
         None
@@ -447,6 +458,29 @@ mod tests {
             60 * 2
         );
         assert!(session_host_and_idle.messages_on);
+
+        let line_freebsd_idle = "On since Mon Mar  1 10:00 (UTC) on pts/5,   idle 1 day 5:07, from host.example.com (messages off)";
+        let session_freebsd_idle = parse_user_session(line_freebsd_idle).unwrap();
+        assert_eq!(session_freebsd_idle.tty, "pts/5");
+        assert_eq!(session_freebsd_idle.host, Some("host.example.com".into()));
+        assert_eq!(
+            session_freebsd_idle.idle_time.unwrap().num_minutes(),
+            24 * 60 + 5 * 60 + 7
+        );
+        assert!(!session_freebsd_idle.messages_on);
+
+        let line_freebsd_idle_no_host = "On since Mon Mar  1 10:00 (UTC) on pts/6, idle 0:42";
+        let session_freebsd_idle_no_host = parse_user_session(line_freebsd_idle_no_host).unwrap();
+        assert_eq!(session_freebsd_idle_no_host.tty, "pts/6");
+        assert_eq!(session_freebsd_idle_no_host.host, None);
+        assert_eq!(
+            session_freebsd_idle_no_host
+                .idle_time
+                .unwrap()
+                .num_minutes(),
+            42
+        );
+        assert!(session_freebsd_idle_no_host.messages_on);
 
         // FIXME: "CEST" timezone parsing is currently broken
         // let line_cest_timezone = indoc::indoc! {"
