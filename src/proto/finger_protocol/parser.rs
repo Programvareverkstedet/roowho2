@@ -49,12 +49,13 @@ pub fn try_parse_structured_user_entry_from_raw_finger_response(
     let project = parse_project(&lines, &mut current_index);
     let plan = parse_plan(&lines, &mut current_index);
 
-    debug_assert!(
-        current_index == lines.len(),
-        "Not all lines in finger response were parsed for user {}. Unparsed lines: {:?}",
-        username,
-        lines.get(current_index..)
-    );
+    if current_index != lines.len() {
+        tracing::warn!(
+            "Not all lines in finger response were parsed for user {}. Unparsed lines: {:?}",
+            username,
+            lines.get(current_index..)
+        );
+    }
 
     Ok(FingerResponseStructuredUserEntry::new(
         username,
