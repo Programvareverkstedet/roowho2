@@ -120,31 +120,26 @@ fn parse_gecos_fields(
     let mut office_phone: Option<String> = None;
     let mut home_phone: Option<String> = None;
 
-    // TODO: handle case where office details contains comma, use last comma as separator
-    if let Some(line) = lines.get(*current_index)
-        && line.trim().starts_with("Office:")
+    while let Some(line) = lines.get(*current_index)
+        && ["Office:", "Office Phone:", "Home Phone:"]
+            .iter()
+            .any(|tag| line.trim_start().starts_with(tag))
     {
-        let office_line = line.trim().trim_start_matches("Office:").trim();
-        if let Some((office_loc, phone)) = office_line.split_once(',') {
-            office = Some(office_loc.trim().to_string());
-            office_phone = Some(phone.trim().to_string());
-        } else {
-            office = Some(office_line.to_string());
+        for field in line.split('\t').map(str::trim).filter(|f| !f.is_empty()) {
+            if let Some(phone) = field.strip_prefix("Office Phone:") {
+                office_phone = Some(phone.trim().to_string());
+            } else if let Some(phone) = field.strip_prefix("Home Phone:") {
+                home_phone = Some(phone.trim().to_string());
+            } else if let Some(office_line) = field.strip_prefix("Office:") {
+                // TODO: handle case where office details contains comma, use last comma as separator
+                if let Some((office_loc, phone)) = office_line.split_once(',') {
+                    office = Some(office_loc.trim().to_string());
+                    office_phone = Some(phone.trim().to_string());
+                } else {
+                    office = Some(office_line.trim().to_string());
+                }
+            }
         }
-        *current_index += 1;
-    }
-    if let Some(line) = lines.get(*current_index)
-        && line.trim().starts_with("Office Phone:")
-    {
-        let phone = line.trim().trim_start_matches("Office Phone:").trim();
-        office_phone = Some(phone.to_string());
-        *current_index += 1;
-    }
-    if let Some(line) = lines.get(*current_index)
-        && line.trim().starts_with("Home Phone:")
-    {
-        let phone = line.trim().trim_start_matches("Home Phone:").trim();
-        home_phone = Some(phone.to_string());
         *current_index += 1;
     }
 
@@ -534,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn test_finger_user_entry_parsing_single_line_office_phone() {
+    fn test_finger_user_entry_parsing_comma_separated_office_and_office_phone() {
         let response_content = indoc::indoc! {"
           Login: alice           			Name: Alice Wonderland
           Directory: /home/alice             	Shell: /bin/bash
@@ -559,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn test_finger_user_entry_parsing_multiline_office_phone() {
+    fn test_finger_user_entry_parsing_gecos_fields_on_separate_lines() {
         let response_content = indoc::indoc! {"
           Login: alice           			Name: Alice Wonderland
           Directory: /home/alice             	Shell: /bin/bash
@@ -580,6 +575,56 @@ mod tests {
         .unwrap();
 
         assert_eq!(user_entry.office, Some("123 Main St".to_string()));
+        assert_eq!(user_entry.office_phone, Some("012-345-6789".to_string()));
+        assert_eq!(user_entry.home_phone, Some("+0-123-456-7890".to_string()));
+    }
+
+    #[test]
+    fn test_finger_user_entry_parsing_tab_separated_office_and_home_phone() {
+        let response_content = indoc::indoc! {"
+          Login: alice           			Name: Alice Wonderland
+          Directory: /home/alice             	Shell: /bin/bash
+          Office: 123 Main St, 012-345-6789	Home Phone: +0-123-456-7890
+          No mail.
+          No Plan.
+        "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "alice".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(user_entry.office, Some("123 Main St".to_string()));
+        assert_eq!(user_entry.office_phone, Some("012-345-6789".to_string()));
+        assert_eq!(user_entry.home_phone, Some("+0-123-456-7890".to_string()));
+    }
+
+    #[test]
+    fn test_finger_user_entry_parsing_tab_separated_office_and_office_phone() {
+        let response_content = indoc::indoc! {"
+          Login: alice           			Name: Alice Wonderland
+          Directory: /home/alice             	Shell: /bin/bash
+          Office: A very long office location	Office Phone: 012-345-6789
+          Home Phone: +0-123-456-7890
+          No mail.
+          No Plan.
+        "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "alice".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            user_entry.office,
+            Some("A very long office location".to_string())
+        );
         assert_eq!(user_entry.office_phone, Some("012-345-6789".to_string()));
         assert_eq!(user_entry.home_phone, Some("+0-123-456-7890".to_string()));
     }
