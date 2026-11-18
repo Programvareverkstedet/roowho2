@@ -285,6 +285,8 @@ fn get_local_user(
         home_phone,
         user_never_logged_in,
         sessions,
+        // TODO: fill out last login
+        None,
         forward,
         email_status,
         pgpkey,

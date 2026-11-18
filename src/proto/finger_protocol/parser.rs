@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use itertools::Itertools;
 
 use crate::proto::finger_protocol::{
-    FingerResponseStructuredUserEntry, FingerResponseUserSession, MailStatus, RawFingerResponse,
+    FingerResponseStructuredUserEntry, FingerResponseUserLastLogin, FingerResponseUserSession,
+    MailStatus, RawFingerResponse,
     time_parser::{parse_bsd_finger_time, parse_user_session_idle_time},
 };
 
@@ -40,6 +41,8 @@ pub fn try_parse_structured_user_entry_from_raw_finger_response(
         parse_user_sessions(&lines, &mut current_index)
     };
 
+    let last_login = parse_last_login(&lines, &mut current_index);
+
     let forward_status = parse_forward_status(&lines, &mut current_index);
     let mail_status = parse_mail_status(&lines, &mut current_index)?;
     let pgp_key = parse_pgp_key(&lines, &mut current_index);
@@ -63,6 +66,7 @@ pub fn try_parse_structured_user_entry_from_raw_finger_response(
         home_phone,
         never_logged_in,
         user_sessions,
+        last_login,
         forward_status,
         mail_status,
         pgp_key,
@@ -253,6 +257,39 @@ pub fn parse_user_session(line: &str) -> anyhow::Result<FingerResponseUserSessio
         idle_time,
         messages_on,
     ))
+}
+
+fn parse_last_login(
+    lines: &[&str],
+    current_index: &mut usize,
+) -> Option<FingerResponseUserLastLogin> {
+    let line = lines.get(*current_index)?.trim();
+    let rest = line.strip_prefix("Last login ")?;
+    *current_index += 1;
+
+    let result = rest
+        .split_once(" on ")
+        .ok_or_else(|| anyhow::anyhow!("Missing tty in last login line: {line}"))
+        .and_then(|(time, tty_and_host)| {
+            let login_time = parse_bsd_finger_time(time)?;
+            let (tty, host) = match tty_and_host.split_once(" from ") {
+                Some((tty, host)) => (tty, Some(host.trim().to_string())),
+                None => (tty_and_host, None),
+            };
+            Ok(FingerResponseUserLastLogin::new(
+                tty.trim().to_string(),
+                login_time,
+                host,
+            ))
+        });
+
+    match result {
+        Ok(last_login) => Some(last_login),
+        Err(err) => {
+            tracing::warn!("Failed to parse last login from line: {}\n{}", line, err);
+            None
+        }
+    }
 }
 
 fn parse_forward_status(lines: &[&str], current_index: &mut usize) -> Option<String> {
@@ -683,6 +720,61 @@ mod tests {
 
         assert!(user_entry.never_logged_in);
         assert!(user_entry.sessions.is_empty());
+    }
+
+    #[test]
+    fn test_finger_user_entry_parsing_last_login() {
+        let response_content = indoc::indoc! {"
+          Login: bob           			Name: Bob Builder
+          Directory: /home/bob             	Shell: /bin/zsh
+          Last login Mon Mar  1 10:00 (UTC) on pts/3 from host.example.com
+          No mail.
+          No Plan.
+        "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "bob".to_string(),
+        )
+        .unwrap();
+
+        assert!(!user_entry.never_logged_in);
+        assert!(user_entry.sessions.is_empty());
+        let last_login = user_entry.last_login.unwrap();
+        assert_eq!(last_login.tty, "pts/3");
+        assert_eq!(last_login.host, Some("host.example.com".to_string()));
+        assert_eq!(last_login.login_time.weekday(), Weekday::Mon);
+        assert_eq!(last_login.login_time.hour(), 10);
+        assert_eq!(user_entry.mail_status, Some(MailStatus::NoMail));
+    }
+
+    #[test]
+    fn test_finger_user_entry_parsing_last_login_year_no_host() {
+        let response_content = indoc::indoc! {"
+          Login: bob           			Name: Bob Builder
+          Directory: /home/bob             	Shell: /bin/zsh
+          Last login Sat Mar  1 10:00 2014 (UTC) on tty1
+          No mail.
+          No Plan.
+        "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "bob".to_string(),
+        )
+        .unwrap();
+
+        let last_login = user_entry.last_login.unwrap();
+        assert_eq!(last_login.tty, "tty1");
+        assert_eq!(last_login.host, None);
+        assert_eq!(
+            last_login.login_time,
+            Utc.with_ymd_and_hms(2014, 3, 1, 10, 0, 0).unwrap()
+        );
     }
 
     #[test]

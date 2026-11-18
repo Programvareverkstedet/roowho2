@@ -172,6 +172,9 @@ pub struct FingerResponseStructuredUserEntry {
     /// A list of user sessions, sourced from utmp entries
     pub sessions: Vec<FingerResponseUserSession>,
 
+    /// The most recent login, if the user is not currently logged in
+    pub last_login: Option<FingerResponseUserLastLogin>,
+
     /// Contents of ~/.forward, if it exists
     pub forward_status: Option<String>,
 
@@ -200,6 +203,7 @@ impl FingerResponseStructuredUserEntry {
         home_phone: Option<String>,
         never_logged_in: bool,
         sessions: Vec<FingerResponseUserSession>,
+        last_login: Option<FingerResponseUserLastLogin>,
         forward_status: Option<String>,
         mail_status: Option<MailStatus>,
         pgp_key: Option<String>,
@@ -209,6 +213,10 @@ impl FingerResponseStructuredUserEntry {
         debug_assert!(
             !never_logged_in || sessions.is_empty(),
             "User cannot be marked as never logged in while having active sessions"
+        );
+        debug_assert!(
+            last_login.is_none() || (!never_logged_in && sessions.is_empty()),
+            "User cannot have a last login while never logged in or having active sessions"
         );
 
         Self {
@@ -221,6 +229,7 @@ impl FingerResponseStructuredUserEntry {
             home_phone,
             never_logged_in,
             sessions,
+            last_login,
             forward_status,
             mail_status,
             pgp_key,
@@ -288,6 +297,29 @@ impl FingerResponseUserSession {
             host,
             idle_time,
             messages_on,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FingerResponseUserLastLogin {
+    /// The tty of the last login
+    pub tty: String,
+
+    /// When the user last logged in
+    #[serde(with = "chrono::serde::ts_seconds")]
+    pub login_time: DateTime<Utc>,
+
+    /// The hostname or address of the machine from which the user last logged in, if available
+    pub host: Option<String>,
+}
+
+impl FingerResponseUserLastLogin {
+    pub fn new(tty: String, login_time: DateTime<Utc>, host: Option<String>) -> Self {
+        Self {
+            tty,
+            login_time,
+            host,
         }
     }
 }

@@ -86,13 +86,18 @@ fn parse_bsd_finger_time_at(time: &str, now: DateTime<Utc>) -> anyhow::Result<Da
         )
     })?;
 
-    let year = guess_year_from_weekday(weekday, month, day, now.year()).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Could not find a valid year for login time {} within {} years",
-            time_,
-            MAX_YEARS_BACK
-        )
-    })?;
+    let year = match parts.next() {
+        Some(year) => year
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid year in login time: {}: {}", time_, e))?,
+        None => guess_year_from_weekday(weekday, month, day, now.year()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Could not find a valid year for login time {} within {} years",
+                time_,
+                MAX_YEARS_BACK
+            )
+        })?,
+    };
 
     tz.ymd_hm_to_utc(year, month, day, clock.hour(), clock.minute())
         .ok_or_else(|| {
@@ -236,6 +241,7 @@ mod tests {
             ("Wed Dec 31 00:00 (Asia/Tokyo)", (2025, 12, 30, 15, 0)),
             ("Wed Dec 31 00:00 (+03)", (2025, 12, 30, 21, 0)),
             ("Wed Dec 31 00:00 (-0330)", (2025, 12, 31, 3, 30)),
+            ("Sat Mar  1 10:00 2014 (UTC)", (2014, 3, 1, 10, 0)),
         ];
 
         for (input, (y, mo, d, h, mi)) in cases {
@@ -262,6 +268,7 @@ mod tests {
             "Mon Mar  1 25:00 (UTC)",
             "Mon Mar  1 10:00 (Not/AZone)",
             "Mon Mar  1 10:00 (+3)",
+            "Mon Mar  1 10:00 foo (UTC)",
         ];
 
         for input in cases {
