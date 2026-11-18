@@ -1,4 +1,4 @@
-use chrono::{Duration, TimeDelta};
+use chrono::{Duration, TimeDelta, Utc};
 
 use crate::proto::finger_protocol::{
     FingerResponseStructuredUserEntry, FingerResponseUserSession, MailStatus,
@@ -41,6 +41,23 @@ pub fn classic_format_finger_response_structured_user_entry(
 
         for session in &entry.sessions {
             result += &format_session_for_finger(session, max_tty_len);
+            result += "\n";
+        }
+
+        if let Some(last_login) = &entry.last_login {
+            let time_format = if Utc::now() - last_login.login_time < Duration::days(365 / 2) {
+                "%a %b %e %H:%M (%Z)"
+            } else {
+                "%a %b %e %H:%M %Y (%Z)"
+            };
+            result += &format!(
+                "Last login {} on {}",
+                last_login.login_time.format(time_format),
+                last_login.tty
+            );
+            if let Some(host) = &last_login.host {
+                result += &format!(" from {}", host);
+            }
             result += "\n";
         }
     }
