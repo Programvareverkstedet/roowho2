@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    os::fd::{AsRawFd, FromRawFd, OwnedFd},
+    os::fd::{FromRawFd, OwnedFd},
     path::PathBuf,
     sync::Arc,
 };
@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
     let rwhod_ignore_list = IgnoreList::load_optional(config.rwhod.ignore_list_path.as_deref())?;
     let finger_ignore_list = IgnoreList::load_optional(config.fingerd.ignore_list_path.as_deref())?;
 
-    let fd_map: HashMap<String, OwnedFd> =
+    let mut fd_map: HashMap<String, OwnedFd> =
         HashMap::from_iter(sd_notify::listen_fds_with_names()?.map(|(fd_num, name)| {
             (
                 name.clone(),
@@ -100,27 +100,20 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Starting RWHOD server");
 
         let socket = fd_map
-            .get("rwhod_socket")
+            .remove("rwhod_socket")
             .map(|fd| {
-                // SAFETY: see above
-                let std_socket = unsafe { std::net::UdpSocket::from_raw_fd(fd.as_raw_fd()) };
+                let std_socket = std::net::UdpSocket::from(fd);
                 std_socket.set_nonblocking(true)?;
                 UdpSocket::from_std(std_socket)
             })
             .context("RWHOD server is enabled, but socket fd not provided by systemd")??;
-
-        let audit_socket: Option<OwnedFd> = fd_map
-            .get("audit_socket")
-            .map(|fd| fd.try_clone())
-            .transpose()
-            .context("Failed to clone audit socket fd")?;
 
         join_set.spawn(rwhod_server(
             socket,
             whod_status_store.clone(),
             rwhod_ignore_list.clone(),
             config.rwhod.clone(),
-            audit_socket,
+            fd_map.remove("audit_socket"),
         ));
     } else {
         tracing::debug!("RWHOD server is disabled in configuration");
@@ -128,10 +121,8 @@ async fn main() -> anyhow::Result<()> {
 
     join_set.spawn(client_server(
         fd_map
-            .get("client_socket")
-            .context("RWHOD client-server socket fd not provided by systemd")?
-            .try_clone()
-            .context("Failed to clone RWHOD client-server socket fd")?,
+            .remove("client_socket")
+            .context("RWHOD client-server socket fd not provided by systemd")?,
         whod_status_store.clone(),
         config.rwhod.enable,
         config.fingerd.enable,
@@ -208,9 +199,7 @@ async fn client_server(
     finger_ignore_list: Option<IgnoreList>,
     startup_token: CancellationToken,
 ) -> anyhow::Result<()> {
-    // SAFETY: see above
-    let std_socket =
-        unsafe { std::os::unix::net::UnixListener::from_raw_fd(socket_fd.as_raw_fd()) };
+    let std_socket = std::os::unix::net::UnixListener::from(socket_fd);
     std_socket.set_nonblocking(true)?;
     let zlink_listener = zlink::tokio::unix::Listener::try_from(OwnedFd::from(std_socket))?;
     let client_server_task = varlink_client_server_task(
