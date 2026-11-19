@@ -6,19 +6,25 @@ use std::{
     path::Path,
 };
 
+use anyhow::Context;
 use chrono::{DateTime, Duration, Timelike, Utc};
 use itertools::Itertools;
 use nix::{libc, sys::stat::stat, unistd::Uid};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use users::all_users;
 use uucore::utmpx::{Utmpx, UtmpxRecord};
 
 use crate::{
-    proto::finger_protocol::{FingerResponseStructuredUserEntry, FingerResponseUserSession},
+    proto::finger_protocol::{
+        FingerResponseStructuredUserEntry, FingerResponseUserLastLogin, FingerResponseUserSession,
+    },
     server::{
         fingerd::{FingerRequestInfo, local_email},
         ignore_list::IgnoreList,
     },
 };
+
+const LASTLOG2_DB_PATH: &str = "/var/lib/lastlog/lastlog2.db";
 
 /// Search for users whose username or full name contains the search string.
 pub fn search_for_user(
@@ -149,6 +155,51 @@ fn read_user_file(path: &Path, owner: Uid) -> anyhow::Result<Option<String>> {
     Ok(Some(String::from_utf8_lossy(&content).trim().to_string()))
 }
 
+/// Look up the most recent login for a user in the lastlog2 database, if available.
+fn read_lastlog2_entry(
+    db_path: &Path,
+    username: &str,
+) -> anyhow::Result<Option<FingerResponseUserLastLogin>> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("Failed to open {}", db_path.display()))?;
+
+    let row = conn
+        .query_row(
+            "SELECT Time, TTY, RemoteHost FROM Lastlog2 WHERE Name = ?1",
+            [username],
+            |row| {
+                Ok((
+                    row.get::<_, Option<i64>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .with_context(|| format!("Failed to query {}", db_path.display()))?;
+
+    let Some((Some(time), tty, host)) = row else {
+        return Ok(None);
+    };
+
+    let Some(login_time) = DateTime::<Utc>::from_timestamp_secs(time).filter(|_| time > 0) else {
+        return Ok(None);
+    };
+
+    Ok(Some(FingerResponseUserLastLogin::new(
+        tty.unwrap_or_default(),
+        login_time,
+        host.filter(|host| !host.is_empty()),
+    )))
+}
+
 /// Retrieve local user information for the given username.
 ///
 /// Returns None if the user does not exist.
@@ -204,8 +255,16 @@ fn get_local_user(
             .collect::<Vec<_>>(),
     };
 
-    // TODO: Don't use utmp entries for this, read from lastlog instead
-    let user_never_logged_in = utmpx_records.is_empty();
+    let last_login = if utmpx_records.is_empty() {
+        read_lastlog2_entry(Path::new(LASTLOG2_DB_PATH), &username).unwrap_or_else(|err| {
+            tracing::warn!("Failed to read last login for {}: {:#}", username, err);
+            None
+        })
+    } else {
+        None
+    };
+
+    let user_never_logged_in = utmpx_records.is_empty() && last_login.is_none();
 
     let now = Utc::now().with_nanosecond(0).unwrap_or(Utc::now());
     let sessions: Vec<FingerResponseUserSession> = utmpx_records
@@ -285,8 +344,7 @@ fn get_local_user(
         home_phone,
         user_never_logged_in,
         sessions,
-        // TODO: fill out last login
-        None,
+        last_login,
         forward,
         email_status,
         pgpkey,
@@ -403,6 +461,73 @@ mod tests {
             fs::set_permissions(&path, Permissions::from_mode(0o755)).unwrap();
 
             assert_eq!(read_user_file(&path, getuid()).unwrap(), None);
+        }
+    }
+
+    mod read_lastlog2_entry {
+        use chrono::{TimeZone, Utc};
+        use rusqlite::Connection;
+        use tempfile::TempDir;
+
+        use super::super::read_lastlog2_entry;
+
+        fn create_db(dir: &TempDir) -> std::path::PathBuf {
+            let path = dir.path().join("lastlog2.db");
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE Lastlog2(Name TEXT PRIMARY KEY, Time INTEGER, TTY TEXT, RemoteHost TEXT, Service TEXT);
+                 INSERT INTO Lastlog2 VALUES ('alice', 1700000000, 'pts/3', 'host.example.com', 'sshd');
+                 INSERT INTO Lastlog2 VALUES ('bob', 1700000000, 'tty2', '', 'login');
+                 INSERT INTO Lastlog2 VALUES ('carol', 0, 'tty1', '', 'login');
+                 INSERT INTO Lastlog2 VALUES ('dave', NULL, NULL, NULL, NULL);",
+            )
+            .unwrap();
+            path
+        }
+
+        #[test]
+        fn entry_with_host() {
+            let dir = TempDir::new().unwrap();
+            let path = create_db(&dir);
+            let last_login = read_lastlog2_entry(&path, "alice").unwrap().unwrap();
+            assert_eq!(last_login.tty, "pts/3");
+            assert_eq!(last_login.host, Some("host.example.com".to_string()));
+            assert_eq!(
+                last_login.login_time,
+                Utc.timestamp_opt(1700000000, 0).unwrap()
+            );
+        }
+
+        #[test]
+        fn empty_host_is_none() {
+            let dir = TempDir::new().unwrap();
+            let path = create_db(&dir);
+            let last_login = read_lastlog2_entry(&path, "bob").unwrap().unwrap();
+            assert_eq!(last_login.tty, "tty2");
+            assert_eq!(last_login.host, None);
+        }
+
+        #[test]
+        fn zero_or_null_time_is_none() {
+            let dir = TempDir::new().unwrap();
+            let path = create_db(&dir);
+            assert_eq!(read_lastlog2_entry(&path, "carol").unwrap(), None);
+            assert_eq!(read_lastlog2_entry(&path, "dave").unwrap(), None);
+        }
+
+        #[test]
+        fn missing_user_is_none() {
+            let dir = TempDir::new().unwrap();
+            let path = create_db(&dir);
+            assert_eq!(read_lastlog2_entry(&path, "eve").unwrap(), None);
+        }
+
+        #[test]
+        fn missing_db_is_none() {
+            let dir = TempDir::new().unwrap();
+            let path = dir.path().join("lastlog2.db");
+            assert_eq!(read_lastlog2_entry(&path, "alice").unwrap(), None);
+            assert!(!path.exists(), "a missing database should not be created");
         }
     }
 

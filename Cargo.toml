@@ -46,6 +46,7 @@ thiserror = "2.0.21"
 zbus = { version = "6.3.0", default-features = false, features = ["tokio", "proxy"] }
 build-info = { version = "0.0.47", default-features = false }
 const_format = "0.2.37"
+rusqlite = { version = "0.43.0", features = ["bundled"] }
 
 [build-dependencies]
 anyhow = "1.0.104"

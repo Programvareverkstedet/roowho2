@@ -336,6 +336,8 @@ in {
           # NOTE: finger needs access to stat tty devices
           "/dev"
 
+          # NOTE: finger reads last login times from lastlog2
+          "-/var/lib/lastlog"
         ] ++ lib.optionals cfg.settings.rwhod.enable [
           cfg.settings.rwhod.ignore_list_path
         ] ++ lib.optionals cfg.settings.fingerd.enable [
