@@ -200,6 +200,14 @@ fn read_lastlog2_entry(
     )))
 }
 
+/// Get a comma-separated gecos field by index, if present.
+fn gecos_field(gecos_fields: &[&str], index: usize) -> Option<String> {
+    gecos_fields
+        .get(index)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
 /// Retrieve local user information for the given username.
 ///
 /// Returns None if the user does not exist.
@@ -235,15 +243,16 @@ fn get_local_user(
         return Ok(None);
     }
 
-    let full_name = user_entry.name;
     let home_dir = user_entry.dir.clone();
     let shell = user_entry.shell;
 
-    let gecos_fields: Vec<&str> = full_name.split(',').collect();
+    let gecos = String::from_utf8_lossy(user_entry.gecos.as_bytes()).into_owned();
+    let gecos_fields: Vec<&str> = gecos.split(',').collect();
 
-    let office = gecos_fields.get(1).map(|s| s.to_string());
-    let office_phone = gecos_fields.get(2).map(|s| s.to_string());
-    let home_phone = gecos_fields.get(3).map(|s| s.to_string());
+    let full_name = gecos_fields.first().unwrap_or(&"").to_string();
+    let office = gecos_field(&gecos_fields, 1);
+    let office_phone = gecos_field(&gecos_fields, 2);
+    let home_phone = gecos_field(&gecos_fields, 3);
 
     let hostname = hostname()?.to_str().unwrap_or("localhost").to_string();
 
