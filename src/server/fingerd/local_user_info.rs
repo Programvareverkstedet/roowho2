@@ -152,7 +152,9 @@ fn read_user_file(path: &Path, owner: Uid) -> anyhow::Result<Option<String>> {
     let mut content = Vec::new();
     file.take(MAX_USER_FILE_SIZE).read_to_end(&mut content)?;
 
-    Ok(Some(String::from_utf8_lossy(&content).trim().to_string()))
+    Ok(Some(
+        String::from_utf8_lossy(&content).trim_end().to_string(),
+    ))
 }
 
 /// Look up the most recent login for a user in the lastlog2 database, if available.
@@ -406,7 +408,7 @@ mod tests {
             let path = write_file(&dir, ".plan", b"  my plan\n", 0o644);
 
             let content = read_user_file(&path, getuid()).unwrap();
-            assert_eq!(content, Some("my plan".to_string()));
+            assert_eq!(content, Some("  my plan".to_string()));
         }
 
         #[test]

@@ -366,7 +366,7 @@ fn parse_pgp_key(lines: &[&str], current_index: &mut usize) -> Option<String> {
             {
                 break;
             }
-            pgp_lines.push(trimmed);
+            pgp_lines.push(*line);
             *current_index += 1;
         }
         Some(pgp_lines.join("\n"))
@@ -390,7 +390,7 @@ fn parse_project(lines: &[&str], current_index: &mut usize) -> Option<String> {
                 if trimmed.starts_with("Plan:") || trimmed == "No Plan." {
                     break;
                 }
-                project_lines.push(trimmed);
+                project_lines.push(*line);
                 *current_index += 1;
             }
             Some(project_lines.join("\n"))
@@ -418,7 +418,7 @@ fn parse_plan(lines: &[&str], current_index: &mut usize) -> Option<String> {
             *current_index += 1;
             let mut plan_lines = Vec::new();
             while let Some(line) = lines.get(*current_index) {
-                plan_lines.push(line.trim());
+                plan_lines.push(*line);
                 *current_index += 1;
             }
             Some(plan_lines.join("\n"))
@@ -979,6 +979,36 @@ mod tests {
             Some("Build a new house.\nNeed to buy materials.".to_string())
         );
         assert_eq!(user_entry.plan, None);
+    }
+
+    #[test]
+    fn test_finger_user_entry_parsing_multiline_keeps_indentation() {
+        let response_content = indoc::indoc! {"
+        Login: bob           			Name: Bob Builder
+        Directory: /home/bob             	Shell: /bin/zsh
+        Never logged in.
+        No mail.
+        PGP key:
+          indented key
+        Project:
+        Tasks:
+          - foundation
+            - concrete
+        "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "bob".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(user_entry.pgp_key, Some("  indented key".to_string()));
+        assert_eq!(
+            user_entry.project,
+            Some("Tasks:\n  - foundation\n    - concrete".to_string())
+        );
     }
 
     #[test]
