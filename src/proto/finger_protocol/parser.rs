@@ -360,7 +360,10 @@ fn parse_pgp_key(lines: &[&str], current_index: &mut usize) -> Option<String> {
         let mut pgp_lines = Vec::new();
         while let Some(line) = lines.get(*current_index) {
             let trimmed = line.trim();
-            if trimmed.starts_with("Project:") || trimmed.starts_with("Plan:") {
+            if trimmed.starts_with("Project:")
+                || trimmed.starts_with("Plan:")
+                || trimmed == "No Plan."
+            {
                 break;
             }
             pgp_lines.push(trimmed);
@@ -384,7 +387,7 @@ fn parse_project(lines: &[&str], current_index: &mut usize) -> Option<String> {
             let mut project_lines = Vec::new();
             while let Some(line) = lines.get(*current_index) {
                 let trimmed = line.trim();
-                if trimmed.starts_with("Plan:") {
+                if trimmed.starts_with("Plan:") || trimmed == "No Plan." {
                     break;
                 }
                 project_lines.push(trimmed);
@@ -915,6 +918,67 @@ mod tests {
             user_entry.plan,
             Some("Build a new house.\n\nNeed to buy materials.".to_string())
         );
+    }
+
+    #[test]
+    fn test_finger_user_entry_parsing_multiline_pgp_followed_by_no_plan() {
+        let response_content = indoc::indoc! {"
+        Login: bob           			Name: Bob Builder
+        Directory: /home/bob             	Shell: /bin/zsh
+        Never logged in.
+        No mail.
+        PGP key:
+        -----BEGIN PGP KEY-----
+        ABCDEFGHIJKLMNOPQRSTUVWXYZ
+        -----END PGP KEY-----
+        No Plan.
+      "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "bob".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            user_entry.pgp_key,
+            Some(
+                "-----BEGIN PGP KEY-----\nABCDEFGHIJKLMNOPQRSTUVWXYZ\n-----END PGP KEY-----"
+                    .to_string()
+            ),
+        );
+        assert_eq!(user_entry.project, None);
+        assert_eq!(user_entry.plan, None);
+    }
+
+    #[test]
+    fn test_finger_user_entry_parsing_multiline_project_followed_by_no_plan() {
+        let response_content = indoc::indoc! {"
+        Login: bob           			Name: Bob Builder
+        Directory: /home/bob             	Shell: /bin/zsh
+        Never logged in.
+        No mail.
+        Project:
+        Build a new house.
+        Need to buy materials.
+        No Plan.
+      "}
+        .trim();
+
+        let response = RawFingerResponse::from(response_content.to_string());
+        let user_entry = FingerResponseStructuredUserEntry::try_from_raw_finger_response(
+            &response,
+            "bob".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            user_entry.project,
+            Some("Build a new house.\nNeed to buy materials.".to_string())
+        );
+        assert_eq!(user_entry.plan, None);
     }
 
     #[test]
